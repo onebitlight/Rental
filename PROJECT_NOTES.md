@@ -1,6 +1,14 @@
 # 贝尔格莱德租房项目 — 稳定状态说明
 
-> 最后固化：2026-09-20（git commit `a334f2c`）。在此之上迭代时，请先读本文件 + `AGENTS.md`。
+> 最后固化：2026-09-20（git commit `c79c669`）。在此之上迭代时，请先读本文件 + `AGENTS.md`。
+
+## 0. 版本存档
+
+| 固化时间 | commit | 说明 |
+|---|---|---|
+| 2026-09-19 | `a334f2c` | 固化稳定状态：修复 HaloOglasi 解析 + 看板链接路径 + 推送链路 |
+| 2026-09-20 | `7b287a4` | 添加 PROJECT_NOTES.md：记录稳定配置/运行逻辑/路径铁律 |
+| 2026-09-20 | `c79c669` | **重构房源卡片渲染逻辑**：真实塞语片区+中文翻译标题、动态核心参数副标题（面积·几房·供暖·车位/家具）、`--rerender` 回放模式 |
 
 ## 1. 项目结构
 
@@ -65,10 +73,14 @@
 - 完整跑 `main()` 时 `start_local_server_and_tunnel` 会在 8765 起新服务 → 端口冲突报 `OSError: Errno 48`，导致推送被跳过。
 - **正确做法**：复用 guardian 已有 public_url（读 `logs/guardian_state.json` / `logs/tunnel_url.txt`），直接调 `push_all` 推送，不要自己再起隧道。
 
-## 7. 看板样式要点
+## 7. 看板样式要点（卡片渲染 v2 — commit `c79c669`）
 
 - 标头：`BELGRADE RENTALS`（原 `Belgrade · Chinese Edition`）。
 - 标题不含 `#房源ID`（该编号 = 网站原生 Listing ID，与 URL 尾部一致，无展示价值，已从 title 移除；去重仍用 `id` 字段）。
+- **卡片标题（h3）= 真实塞语片区 + 中文翻译 + 户型/特色**，如 `Učiteljsko naselje 兹韦兹达拉 · 一房`、`Žarkovo 丘卡里察 · 全配家具`。不再用千篇一律的"贝尔格莱德精选公寓"。
+- **卡片副标题（feat）= 动态核心参数**，用 `·` 分隔：面积 m² · 几房 · 供暖（集中/燃气/电暖） · 车位/家具等，如 `50 m² · 两房半 · 全配家具`。不再显示"精选房源，交通便利"。
+- 片区中文对照：`AREA_ZH` 词典（含行政区+热门微片区），`area_zh()` 查表，`rooms_zh()` 户型翻译，`halo_parse_feature_text()` 从塞语描述/slug 识别供暖/车位/家具/电梯/阳台/新楼/即刻入住。
+- HaloOglasi 每张卡仅本卡片子树内提取：`halo_card_places()`（区位）、`halo_card_features()`（Kvadratura/Broj soba/Spratnost）、`halo_card_desc()`（描述）、`halo_build_item()`（组装 item）。CityExpert 用 `extract_cityexpert_area()` 从 url slug/location 识别片区。
 - `card_render.py` 的微信图文卡显示 street，不含 #编号。
 
 ## 8. 微信推送格式
