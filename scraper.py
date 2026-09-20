@@ -45,34 +45,71 @@ def load_history():
 def save_history(history_set):
     HISTORY_FILE.write_text(json.dumps(list(history_set), ensure_ascii=False, indent=2), encoding='utf-8')
 
-def extract_features(title, desc=""):
-    text = f"{title} {desc}".lower()
-    feat = "精选舒适住宅"
-    area_cn = "贝尔格莱德"
-    if "vracar" in text or "vrčar" in text:
-        feat = "市中心黄金地段 · 生活配套成熟"
-        area_cn = "Vračar 弗拉查尔区"
-    elif "stari grad" in text:
-        feat = "老城区核心 · 历史人文风貌"
-        area_cn = "Stari Grad 老城区"
-    elif "novi beograd" in text or "blok" in text:
-        feat = "新贝尔格莱德 · 现代商务宜居区"
-        area_cn = "Novi Beograd 新贝尔格莱德"
-    elif "dedinje" in text or "senjak" in text:
-        feat = "传统富人区 · 安静私密"
-        area_cn = "Dedinje/Senjak 高档住宅区"
-    else:
-        area_cn = "贝尔格莱德优质片区"
-    
-    extras = []
-    if "parking" in text or "garaž" in text or "车位" in text:
-        extras.append("✅ 带独立车位")
-    if "namest" in text or "furnished" in text:
-        extras.append("✅ 已配精美家具")
-    if "teras" in text or "阳台" in text:
-        extras.append("✅ 视野开阔阳台")
-        
-    return feat, area_cn, " | ".join(extras) if extras else "✅ 优质品质房源"
+# 塞尔维亚片区/地名 → 中文对照表（含常见微片区；无命中时回退到行政区，再无则贝尔格莱德）
+AREA_ZH = {
+    # 行政区/大片区
+    "Novi Beograd": "新贝尔格莱德", "Zemun": "泽蒙", "Vračar": "弗拉查尔",
+    "Stari grad": "老城区", "Savski venac": "萨夫斯基维纳茨", "Čukarica": "丘卡里察",
+    "Voždovac": "沃日多瓦茨", "Zvezdara": "兹韦兹达拉", "Palilula": "帕利卢拉",
+    "Rakovica": "拉科维察", "Surčin": "苏尔钦", "Beograd": "贝尔格莱德",
+    # 热门微片区/BW 区
+    "Mirijevo": "米里耶沃", "Dedinje": "德迪涅", "Senjak": "塞尼亚克",
+    "Crveni krst": "红十字区", "Neimar": "内伊马尔", "Ledine": "莱迪内",
+    "Dorćol": "多尔乔尔", "Krnjača": "克尔尼亚恰", "Lekino brdo": "莱基诺山",
+    "Cvetkova pijaca": "茨韦特科娃集市", "Blok 37": "37区", "Block 37": "37区",
+    "Kluz": "克卢兹", "Karaburma": "卡拉布尔马", "Banovo brdo": "巴诺沃山",
+    "Beograd na vodi": "贝尔格莱德水岸", "Beograd na Vodi": "贝尔格莱德水岸",
+    "Bulevar kralja Aleksandra": "亚历山大国王大道", "Fontana": "方塔纳",
+    "YUBC": "商务中心区", "Belville": "贝尔维尔", "Ada": "阿达",
+}
+
+# 行政区（大写匹配用，兼容 "Opština Xxx"）
+DISTRICT_ALIAS = {
+    "zvezdara": "Zvezdara", "vracar": "Vračar", "starigrad": "Stari grad",
+    "savskivenac": "Savski venac", "cukarica": "Čukarica", "vozdovac": "Voždovac",
+    "palilula": "Palilula", "rakovica": "Rakovica", "surcin": "Surčin",
+    "novibeograd": "Novi Beograd", "zemun": "Zemun", "beograd": "Beograd",
+}
+
+
+def area_zh(name):
+    """塞尔维亚片区名 → 中文。优先精确查表，其次尝试行政区化，最后回退。"""
+    if not name:
+        return ""
+    n = str(name).strip()
+    # 精确命中
+    if n in AREA_ZH:
+        return AREA_ZH[n]
+    # 尝试匹配行政区首词
+    first = n.split()[0] if n.split() else n
+    if first in AREA_ZH:
+        return AREA_ZH[first]
+    # 尝试去掉连字符/空格后按行政区别名映射
+    key = re.sub(r"[^a-z]", "", n.lower())
+    if key in DISTRICT_ALIAS:
+        return AREA_ZH.get(DISTRICT_ALIAS[key], key)
+    return ""
+
+
+def rooms_zh(rooms):
+    """几房 → 中文户型名称。"""
+    if rooms is None:
+        return ""
+    r = float(rooms)
+    if r <= 1.25:
+        return "一房"
+    if r <= 1.75:
+        return "一房半"
+    if r <= 2.25:
+        return "两房"
+    if r <= 2.75:
+        return "两房半"
+    if r <= 3.25:
+        return "三房"
+    if r <= 3.75:
+        return "三房半"
+    return f"{r:g} 房"
+
 
 def fetch_cityexpert(page):
     items = []
@@ -110,22 +147,86 @@ def fetch_cityexpert(page):
                 img_url = "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=800&q=80"
                 
             if within_budget(price):
-                main_feat, area_cn, sub_feat = extract_features(street)
+                item_url = f"https://cityexpert.rs/en/properties-for-rent/belgrade/{prop_id}"
+                area_cn = extract_cityexpert_area(item, street, item_url)
+                # 设施：从可用字段粗略识别（CityExpert API 列表字段有限，尽力而为）
+                extras = halo_parse_feature_text(f"{street} {structure}")
+                heating = ""
+                other = []
+                for x in extras:
+                    if '供暖' in x or '电暖' in x:
+                        heating = x
+                    else:
+                        other.append(x)
+                rooms_word = ""
+                # CityExpert structureName 常见为 '1+0、2-room、3.5-room...'，从中取房间数
+                mm = re.search(r'(\d(?:\.\d)?)', structure)
+                if mm and re.search(r'room|soba|\+', structure.lower()):
+                    try:
+                        rooms_word = rooms_zh(float(mm.group(1)))
+                    except Exception:
+                        rooms_word = ""
+                if not rooms_word:
+                    rooms_word = structure
+                structure_short = rooms_word if rooms_word != structure else structure
+                # 标题：塞尔维亚片区 + 中文 + 户型/特色
+                title_parts = [area_cn]
+                if other:
+                    title_parts.append(" · ".join(other))
+                elif structure_short and structure_short != structure:
+                    title_parts.append(structure_short)
+                title = " · ".join(title_parts)
+                # 底部核心参数副标题：户型 · 供暖 · 车位/家具
+                subtitle_parts = [structure_short] if structure_short and structure_short != structure else []
+                if heating:
+                    subtitle_parts.append(heating)
+                if other:
+                    subtitle_parts.append(" · ".join(other))
+                subtitle = " · ".join(subtitle_parts)
                 items.append({
                     'id': f"ce_{prop_id}",
                     'source': 'CityExpert',
-                    'title': f"{street} · {main_feat}",
+                    'title': title,
                     'price': parse_price(price),
                     'area_name': area_cn,
-                    'structure': structure,
-                    'features': f"<b>{structure}</b> · {sub_feat}",
-                    'raw_features': sub_feat,
+                    'structure': structure_short,
+                    'features': f"<b>{structure_short}</b> · {subtitle}" if subtitle else f"<b>{structure_short}</b>",
+                    'raw_features': subtitle,
+                    'size': None,
+                    'rooms': None,
+                    'floor': '',
+                    'heating': heating,
                     'image': img_url,
-                    'url': f"https://cityexpert.rs/en/properties-for-rent/belgrade/{prop_id}"
+                    'url': item_url
                 })
     except Exception as e:
         print(f"CityExpert 渲染异常: {e}")
     return items
+
+
+def extract_cityexpert_area(item, street, item_url):
+    """从 CityExpert 数据识别真实塞尔维亚片区 + 中文名。优先 url slug，其次 locationName/street。"""
+    hint = (item.get('locationName') or item.get('municipality') or item.get('neighborhood') or street or "")
+    # slug 里通常带片区，如 ...-edvarda-griga-rakovica
+    slug = item_url.lower()
+    found = ""
+    for name, zh in sorted(AREA_ZH.items(), key=lambda kv: -len(kv[0])):
+        if name.lower() in slug:
+            found = name
+            break
+    if not found and hint:
+        h = str(hint).lower()
+        for name, zh in sorted(AREA_ZH.items(), key=lambda kv: -len(kv[0])):
+            if name.lower() in h:
+                found = name
+                break
+    if found:
+        return f"{found} {AREA_ZH[found]}".strip()
+    # 回退到 hint 原文或贝尔格莱德
+    if hint and hint != "Belgrade":
+        zh_hint = area_zh(hint)
+        return f"{hint} {zh_hint}".strip() if zh_hint else hint
+    return "贝尔格莱德"
 
 def halo_card_price(card):
     """在单个 product-item 卡片内部提取价格（data-value 或 <i> 文本），绝不跨卡片。"""
@@ -172,13 +273,180 @@ def halo_card_link(card):
     return ''
 
 
+def halo_card_places(card):
+    """提取卡片内 subtitle-places：行政区/片区/街名等，返回列表（仅本卡片子树）。"""
+    ul = card.query_selector('ul.subtitle-places')
+    places = []
+    if ul:
+        for li in ul.query_selector_all('li'):
+            t = (li.inner_text() or '').strip()
+            if t:
+                places.append(t)
+    return places
+
+
+def halo_card_features(card):
+    """提取卡片内 product-features：Kvadratura(面积)/Broj soba(几房)/Spratnost(楼层)。"""
+    feats = {}
+    ul = card.query_selector('ul.product-features, ul[class*=product-features]')
+    if ul:
+        for div in ul.query_selector_all('li .value-wrapper'):
+            text = (div.inner_text() or '').strip()
+            legend = div.query_selector('span.legend')
+            label = (legend.inner_text() or '').strip() if legend else ''
+            value = text.replace(label, '').strip()
+            if label:
+                feats[label] = value
+    return feats
+
+
+def halo_card_desc(card):
+    """提取卡片内房源描述短文本（塞尔维亚语，含真实区位/设施线索）。"""
+    el = card.query_selector('.text-description-list.product-description, .product-description.short-desc')
+    if el:
+        return (el.inner_text() or '').strip()
+    return ''
+
+
+def halo_parse_feature_text(text):
+    """从塞尔维亚语描述/标题/slug 中识别真实设施（供暖/车位/家具/电梯/阳台/新楼/即刻入住），返回列表。"""
+    found = []
+    t = f"{text}".lower()
+    if re.search(r'centralno|central heating|centralno grejanje|city heating|集中供暖', t):
+        found.append("集中供暖")
+    if re.search(r'gasno|gas |gasn|燃气|gas heating', t):
+        found.append("燃气供暖")
+    if re.search(r'\bta\b|elektric|electric|电暖|电热', t):
+        found.append("电暖")
+    if re.search(r'parking|garaž|garaz|parking mesto|车位', t):
+        found.append("带车位")
+    if re.search(r'namest|oprem|lju|furnished|家具|配好', t):
+        found.append("全配家具")
+    if re.search(r'teras|terace|阳台', t):
+        found.append("带阳台")
+    if re.search(r'lift|电梯', t):
+        found.append("有电梯")
+    if re.search(r'novogradnja|novograd|nova zgrada|新楼', t):
+        found.append("新楼")
+    # 去重保序
+    seen = set()
+    uniq = []
+    for x in found:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
+
+
+def halo_build_item(item_id, place_hint, hf, desc_text, price, img_url, href):
+    """由单卡片提取的真实字段构建房源 item（片区中文名 + 动态标题 + 核心参数副标题）。"""
+    # 片区：优先用 subtitle-places 里的微片区/行政区，回退用标题
+    district = ""
+    micro = ""
+    if place_hint:
+        # 最后去掉 "Opština" 前缀的行政区是重点候选；微片区通常在第3项
+        for p in place_hint:
+            if p.startswith('Opština'):
+                district = re.sub(r'^Opština\s*', '', p).strip()
+        if not micro:
+            # 取第3项（Beograd / Opština Xxx / 微片区 / 街道）
+            if len(place_hint) >= 3 and not place_hint[2].startswith('Opština'):
+                micro = place_hint[2]
+        if not district:
+            district = place_hint[1] if len(place_hint) >= 2 else ''
+    focus = micro or district
+    zh = area_zh(focus) or area_zh(district)
+    sr_name = focus if focus else "贝尔格莱德"
+
+    # 面积/几房/楼层
+    size = None
+    rooms = None
+    floor = ""
+    for label, val in hf.items():
+        low = label.lower()
+        if 'kvadr' in low:
+            mm = re.search(r'([\d.,]+)', val)
+            if mm:
+                try:
+                    size = float(mm.group(1).replace(',', '.'))
+                except Exception:
+                    size = None
+        elif 'soba' in low or 'broj' in low:
+            mm = re.search(r'([\d.,]+)', val)
+            if mm:
+                try:
+                    rooms = float(mm.group(1).replace(',', '.'))
+                except Exception:
+                    rooms = None
+        elif 'sprat' in low:
+            floor = val.strip()
+
+    # 供暖与设施：从描述+slug+标题里识别
+    slug = href or ''
+    feat_text = f"{desc_text} {slug}".lower()
+    extras = halo_parse_feature_text(feat_text)
+    # 从设施里分出供暖（集中供暖/燃气供暖/电暖）与其余配套
+    heating = ""
+    other = []
+    for x in extras:
+        if '供暖' in x or '电暖' in x:
+            heating = x
+        else:
+            other.append(x)
+
+    # 中文片区标签（含微片区中文名）
+    area_cn = f"{sr_name} {zh}".strip() if zh else sr_name
+    # 标题：塞尔维亚片区 + 中文 + 户型/特色
+    rooms_word = rooms_zh(rooms) if rooms else ""
+    feature_word = ""
+    if '新楼' in other:
+        feature_word = f"{rooms_word}新楼" if rooms_word else "新楼"
+    elif rooms_word:
+        feature_word = rooms_word
+    # 片区亮点描述词：如 新楼/即刻入住/带车位 等
+    highlight = " · ".join(other) if other else (feature_word or "")
+    title_parts = [f"{sr_name} {zh}".strip() if zh else sr_name]
+    if highlight:
+        title_parts.append(highlight)
+    title = " · ".join(title_parts)
+
+    # 底部核心参数副标题：面积 · 几房 · 供暖 · 车位/家具
+    subtitle_parts = []
+    if size and size > 0:
+        subtitle_parts.append(f"{size:.0f} m²" if size == int(size) else f"{size:g} m²")
+    if rooms and rooms > 0:
+        subtitle_parts.append(rooms_zh(rooms))
+    if heating:
+        subtitle_parts.append(heating)
+    if other:
+        subtitle_parts.append(" · ".join(other))
+    subtitle = " · ".join(subtitle_parts)
+
+    return {
+        'id': f'halo_{item_id}',
+        'source': 'HaloOglasi',
+        'title': title,
+        'price': price,
+        'area_name': area_cn,
+        'structure': rooms_word or "公寓",
+        'features': subtitle,
+        'raw_features': subtitle,
+        'size': size,
+        'rooms': rooms,
+        'floor': floor,
+        'heating': heating,
+        'image': img_url,
+        'url': f'https://www.halooglasi.com{href}'
+    }
+
+
 def fetch_halooglasi(page):
     items = []
     url = f"https://www.halooglasi.com/nekretnine/izdavanje-stanova/beograd?cena_d_eur={MAX_PRICE}&cena_od_eur={MIN_PRICE}"
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(3000)
-        # 按卡片隔离解析：每一个 .product-item 是独立房源卡片，内部提取 ID/链接/价格/图片，杜绝跨卡片串数据
+        # 按卡片隔离解析：每一个 .product-item 是独立房源卡片，内部提取 ID/链接/价格/图片/区位/户型，杜绝跨卡片串数据
         cards = page.query_selector_all('.product-item')
         for card in cards:
             item_id_el = card.get_attribute('data-id')
@@ -205,18 +473,11 @@ def fetch_halooglasi(page):
                     print(f"HaloOglasi 详情页取图异常({item_id}): {e}")
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(1500)
-            items.append({
-                'id': f'halo_{item_id}',
-                'source': 'HaloOglasi',
-                'title': f'贝尔格莱德精选公寓 · 舒适住宅',
-                'price': price,
-                'area_name': '贝尔格莱德中心区',
-                'structure': '标准公寓',
-                'features': '<b>精选房源</b> · 交通便利',
-                'raw_features': '交通便利 · 配套齐全',
-                'image': img_url,
-                'url': f'https://www.halooglasi.com{href}'
-            })
+            place_hint = halo_card_places(card)
+            hf = halo_card_features(card)
+            desc_text = halo_card_desc(card)
+            item = halo_build_item(item_id, place_hint, hf, desc_text, price, img_url, href)
+            items.append(item)
     except Exception as e:
         print(f"HaloOglasi 渲染异常: {e}")
     return items
@@ -348,40 +609,14 @@ def send_wechat_notification(new_items, public_url=None):
         print("❌ 微信消息推送失败（已重试）", file=sys.stderr)
     return ok
 
-def main():
-    print(f'🚀 启动 Playwright 引擎进行全平台渲染抓取 ({MIN_PRICE}EUR - {MAX_PRICE}EUR)...')
-    print(f'📂 当前输出根目录: {TODAY_OUTPUT_DIR}')
-    history = load_history()
-    
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080}
-        )
-        page = context.new_page()
-        ce_items = fetch_cityexpert(page)
-        halo_items = fetch_halooglasi(page)
-        zida_items = fetch_4zida(page)
-        browser.close()
-        
-    all_raw_items = ce_items + halo_items + zida_items
-    print(f'📊 汇总原始房源总量: {len(all_raw_items)} 条')
-    
-    new_items = []
-    for item in all_raw_items:
-        if item['id'] not in history:
-            new_items.append(item)
-            history.add(item['id'])
-            
-    print(f'✨ 去重过滤后实际新增房源: {len(new_items)} 条')
-    NEW_ITEMS_FILE.write_text(json.dumps(new_items, ensure_ascii=False, indent=2), encoding='utf-8')
-    save_history(history)
-    
+def _render_board(new_items):
+    """根据房源列表重新生成：每套独立详情页 + 今日中文索引看板。返回 None，目录写入即完成。"""
+    if not new_items:
+        print('⚠️ _render_board: 无房源，仅重建空看板')
     for idx, item in enumerate(new_items, 1):
         detail_filename = f"house_{idx}.html"
         item['detail_link'] = f"details/{detail_filename}"
-        
+
         detail_html = f'''<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -508,13 +743,76 @@ def main():
     html_report.write_text(report_content, encoding='utf-8')
     print(f'📄 中文聚合看板与独立详情页已成功生成: {html_report}')
 
+
+def _send_wechat(new_items):
+    """启动本地静态服务+公网隧道，然后通过微信通道推送测试/日报。返回是否送达。"""
     server, tunnel_process, public_url = start_local_server_and_tunnel(OUTPUT_BASE)
     try:
-        send_wechat_notification(new_items, public_url)
+        ok = send_wechat_notification(new_items, public_url)
+        return ok
     finally:
         if tunnel_process:
             tunnel_process.terminate()
         server.shutdown()
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="贝尔格莱德租房抓取+中文看板生成")
+    ap.add_argument('--rerender', action='store_true',
+                    help='不重新抓取，直接从今天 data/new_items.json 重新渲染列表+详情页（用于改版后回放）')
+    ap.add_argument('--skip-push', action='store_true', help='生成看板但不发送微信推送')
+    args = ap.parse_args()
+
+    if args.rerender:
+        print(f'♻️ 重渲染模式：读取今日已抓房源 {NEW_ITEMS_FILE}，不重复抓取/不动 history')
+        if not NEW_ITEMS_FILE.exists():
+            print(f'❌ 找不到 {NEW_ITEMS_FILE}，无法重渲染', file=sys.stderr)
+            return
+        try:
+            new_items = json.loads(NEW_ITEMS_FILE.read_text(encoding='utf-8'))
+        except Exception as e:
+            print(f'❌ 读取 {NEW_ITEMS_FILE} 失败: {e}', file=sys.stderr)
+            return
+        if not isinstance(new_items, list) or not new_items:
+            print('今日暂无房源数据可重渲染')
+            return
+        print(f'♻️ 待重渲染房源: {len(new_items)} 条')
+        _render_board(new_items)
+        if not args.skip_push:
+            _send_wechat(new_items)
+        return
+
+    print(f'🚀 启动 Playwright 引擎进行全平台渲染抓取 ({MIN_PRICE}EUR - {MAX_PRICE}EUR)...')
+    print(f'📂 当前输出根目录: {TODAY_OUTPUT_DIR}')
+    history = load_history()
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080}
+        )
+        page = context.new_page()
+        ce_items = fetch_cityexpert(page)
+        halo_items = fetch_halooglasi(page)
+        zida_items = fetch_4zida(page)
+        browser.close()
+        
+    all_raw_items = ce_items + halo_items + zida_items
+    print(f'📊 汇总原始房源总量: {len(all_raw_items)} 条')
+    
+    new_items = []
+    for item in all_raw_items:
+        if item['id'] not in history:
+            new_items.append(item)
+            history.add(item['id'])
+            
+    print(f'✨ 去重过滤后实际新增房源: {len(new_items)} 条')
+    NEW_ITEMS_FILE.write_text(json.dumps(new_items, ensure_ascii=False, indent=2), encoding='utf-8')
+    save_history(history)
+    _render_board(new_items)
+    _send_wechat(new_items)
 
 if __name__ == '__main__':
     main()
