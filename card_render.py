@@ -169,7 +169,10 @@ def build_html(listings: list) -> tuple:
         info = fmt_info(l)                # "80 m² · 3 房 · Surčin 苏尔钦"
         tags = highlight_tags(l)
         tags_html = "".join(f'<span class="tag">{t}</span>' for t in tags)
-        areacn = area_cn(l.get("area"))   # "Surčin 苏尔钦"
+        areacn = area_cn(l.get("area"))   # "Surčin 苏尔钦"（保留：标题前导片区仍用它）
+        # 右上角标签改为发布者身份（个人/中介/机构），缺省回退为“中介/机构”
+        pub = str(l.get("publisher") or "").strip() or "中介/机构"
+        pclass = "personal" if pub == "个人" else "agency"
 
         # 缩略图：有本地文件用 file://，否则留白占位
         img_html = (f'<img class="thumb" src="file://{thumb}" alt="">'
@@ -181,7 +184,7 @@ def build_html(listings: list) -> tuple:
         <div class="card">
           <a class="thumbwrap" href="{url}" target="_blank" rel="noopener">{img_html}</a>
           <div class="body">
-            <div class="area"><span class="num">{num}</span><span>{areacn}</span></div>
+            <div class="area publisher-{pclass}"><span class="num">{num}</span><span>{pub}</span></div>
             <div class="ttl">{title_html}</div>
             <div class="meta"><span class="price">{price}<small>/月</small></span><span class="info">{info}</span></div>
             <div class="tags">{tags_html}</div>
@@ -210,8 +213,10 @@ def build_html(listings: list) -> tuple:
   .thumb{{width:{THUMB}px;height:{THUMB}px;object-fit:cover;display:block}}
   .thumb.ph{{background:#eef1f6}}
   .body{{flex:1;padding:12px 14px;min-width:0}}
-  .area{{font-size:13px;color:#4a5a78;margin-bottom:4px}}
+  .area{{font-size:13px;margin-bottom:4px}}
   .area .num{{color:#c0392b;font-weight:700;margin-right:4px}}
+  .area.publisher-personal{{color:#1e7d3c}}
+  .area.publisher-agency{{color:#38507e}}
   .ttl{{font-size:16px;font-weight:700;line-height:1.35;margin-bottom:6px}}
   .ttl a{{color:#1a2a4a;text-decoration:none}}
   .ttl a:hover{{text-decoration:underline;color:#2a5a9a}}
