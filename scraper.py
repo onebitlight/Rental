@@ -181,7 +181,14 @@ def fetch_cityexpert(page=None):
                 img_url = "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=800&q=80"
 
             if within_budget(price):
-                item_url = f"https://cityexpert.rs/en/properties-for-rent/belgrade/{prop_id}"
+                # slug 补全以修复 404：/belgrade/{pid}/{slug}，slug 用 street/structure/municipality 拼接（按 PROJECT_NOTES 规范）
+                municipality = str(item.get('municipality') or '').lower().replace('č','c').replace('ć','c').replace('š','s').replace('ž','z').replace(' ', '-')
+                street_slug = str(street).lower().replace('č','c').replace('ć','c').replace('š','s').replace('ž','z').replace(' ', '-')
+                structure_num = float(item.get('structure') or 1)
+                structure_slug_rooms = f"{structure_num:.0f}-rooms"
+                slug_parts = [structure_slug_rooms, 'apartment', street_slug, municipality]
+                slug = '-'.join(p.strip('-') for p in slug_parts if p.strip('-'))
+                item_url = f"https://cityexpert.rs/en/properties-for-rent/belgrade/{prop_id}/{slug}"
                 area_cn = extract_cityexpert_area(item, street, item_url)
                 # 设施：从可用字段粗略识别（CityExpert API 列表字段有限，尽力而为）
                 extras = halo_parse_feature_text(f"{street} {structure}")
