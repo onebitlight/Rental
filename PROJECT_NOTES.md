@@ -41,8 +41,16 @@
 ```bash
 # 统一入口（抓取 + 渲染看板，公寓+独栋）
 bash ~/BelgradeRentals/run_all.sh
+# 仅公寓
+bash ~/BelgradeRentals/run_all.sh stan
+# 仅独栋/别墅
+bash ~/BelgradeRentals/run_all.sh kuca
 ```
 
+- **运行模式控制**（run_all.sh 内部）：
+  - 默认（无参数）读取脚本内 `ENABLE_STAN` / `ENABLE_KUCA` 两个全局开关（改 `false` 即关闭对应抓取）。
+  - 传参 `stan` / `kuca` 强制只跑对应类型；传参时即使对应开关为 `false` 也会强跑（`|| [ "$MODE" = "stan/kuca" ]`）。
+  - 定时调用的主命令保持 `bash ~/BelgradeRentals/run_all.sh`（读开关配置）。
 - ⚠️ **旧的 `scraper.py` 已于 2026-09-27 彻底移除**，不再对它监控/调用。
 - 每日 01:00 定时抓取，任务 id `e89c7fb9-e61d-4549-81ba-879bdc1b2403`，指令统一为 `bash ~/BelgradeRentals/run_all.sh`。
 - 生成看板：`/Volumes/Data2TB/rent/stan_<日期>/index_<日期>.html`、`/Volumes/Data2TB/rent/kuca_<日期>/index_<日期>.html`。
