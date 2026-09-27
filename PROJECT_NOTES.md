@@ -9,6 +9,8 @@
 | 2026-09-19 | `a334f2c` | 固化稳定状态：修复 HaloOglasi 解析 + 看板链接路径 + 推送链路 |
 | 2026-09-20 | `7b287a4` | 添加 PROJECT_NOTES.md：记录稳定配置/运行逻辑/路径铁律 |
 | 2026-09-20 | `c79c669` | **重构房源卡片渲染逻辑**：真实塞语片区+中文翻译标题、动态核心参数副标题（面积·几房·供暖·车位/家具）、`--rerender` 回放模式 |
+| 2026-09-27 | `494aeb7` | `run_all.sh` 增加 `ENABLE_STAN`/`ENABLE_KUCA` 开关与 `stan`/`kuca` 模式传参 |
+| 2026-09-27 | `aa122f0` | **抓取策略固化**：Stan 预算 €350-650 多页翻页；Kuca 预算 €500-1300 深度翻页 + 关闭强制视觉筛选，实测各成功 |
 
 ## 1. 项目结构
 
@@ -26,8 +28,11 @@
 
 ## 2. 关键配置（硬编码常量，无独立 config.json）
 
-`scraper_stan.py` / `scraper_kuca.py` / `card_render.py` 顶部：
-- `MIN_PRICE = 350` / `MAX_PRICE = 650` — 价格区间
+**预算与抓取参数（2026-09-27 固化，commit `aa122f0`，实测成功）**：
+- `scraper_stan.py`（公寓）：`MIN_PRICE=350` / `MAX_PRICE=650`，`MAX_PAGES=3` 多页翻页（CityExpert + HaloOglasi 均带预算参数）
+- `scraper_kuca.py`（独栋）：`MIN_PRICE=500` / `MAX_PRICE=1300`，`MAX_PAGES=3` 深度翻页（可抓取远郊/性价比房源），`ENABLE_VISION_FILTER=False`（关闭强制视觉识别筛选，避免误过滤；改 `True` 才开启严格图片筛选）
+
+**所有抓取/渲染脚本顶部通用**：
 - `OUTPUT_BASE`：优先外接盘 `/Volumes/Data2TB/rent`，不可写则回退本地 `BASE_DIR/output`
 - **看板路径已改为按类型分目录**：`/Volumes/Data2TB/rent/stan_<日期>/index_<日期>.html`（公寓）、`/Volumes/Data2TB/rent/kuca_<日期>/index_<日期>.html`（独栋）
 - 详情页在各自 `details/` 子目录
