@@ -31,8 +31,12 @@ else:
 TODAY_OUTPUT_DIR = OUTPUT_BASE / f'stan_{TODAY_STR}'
 TODAY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# ==============================================
+# 🎛️ 公寓抓取核心配置项
+# ==============================================
 MIN_PRICE = 350
 MAX_PRICE = 650
+MAX_PAGES = 3               # 多页抓取页数
 
 def load_history():
     if HISTORY_FILE.exists():
@@ -64,7 +68,7 @@ def within_budget(price):
     return p is not None and MIN_PRICE <= p <= MAX_PRICE
 
 def fetch_cityexpert():
-    """1. CityExpert 专属提取逻辑：通过 API JSON 内联节点精准获取"""
+    """1. CityExpert 专属提取逻辑"""
     items = []
     url = f"https://cityexpert.rs/en/properties-for-rent/belgrade?ptypeid=1&priceFrom={MIN_PRICE}&priceTo={MAX_PRICE}"
     try:
@@ -138,83 +142,82 @@ def fetch_cityexpert():
     return items
 
 def fetch_halooglasi():
-    """2. HaloOglasi 专属提取逻辑：通过 DOM 卡片独立作用域提取真实图片与价格"""
+    """2. HaloOglasi 专属提取逻辑（支持多页翻页抓取）"""
     items = []
-    url = f"https://www.halooglasi.com/nekretnine/izdavanje-stanova/beograd?cena_d_eur={MAX_PRICE}&cena_od_eur={MIN_PRICE}"
-    try:
-        scraper = cloudscraper.create_scraper()
-        r = scraper.get(url, timeout=20)
-        if r.status_code != 200:
-            return items
+    scraper = cloudscraper.create_scraper()
+    
+    for page in range(1, MAX_PAGES + 1):
+        url = f"https://www.halooglasi.com/nekretnine/izdavanje-stanova/beograd?cena_d_eur={MAX_PRICE}&cena_od_eur={MIN_PRICE}&page={page}"
+        try:
+            r = scraper.get(url, timeout=20)
+            if r.status_code != 200:
+                break
 
-        soup = BeautifulSoup(r.text, 'html.parser')
-        # 寻找每一个独立的房源卡片，严格在卡片内部提取，绝不跨域
-        cards = soup.find_all('div', class_='product-item')
+            soup = BeautifulSoup(r.text, 'html.parser')
+            cards = soup.find_all('div', class_='product-item')
+            if not cards:
+                break
 
-        for card in cards:
-            # 提取卡片ID
-            item_id = card.get('data-id')
-            if not item_id:
-                continue
+            for card in cards:
+                item_id = card.get('data-id')
+                if not item_id:
+                    continue
 
-            # 1. 精准获取本卡片的价格（取 span[data-value] 或 central-feature i 文本）
-            price = None
-            price_span = card.find('span', attrs={'data-value': True})
-            if price_span:
-                price = parse_price(price_span.get('data-value'))
-            if not price:
-                price_i = card.select_one('.central-feature i')
-                if price_i:
-                    price = parse_price(price_i.text)
+                price = None
+                price_span = card.find('span', attrs={'data-value': True})
+                if price_span:
+                    price = parse_price(price_span.get('data-value'))
+                if not price:
+                    price_i = card.select_one('.central-feature i')
+                    if price_i:
+                        price = parse_price(price_i.text)
 
-            if not within_budget(price):
-                continue
+                if not within_budget(price):
+                    continue
 
-            # 2. 精准获取本卡片的真实图片（处理 src / data-src 懒加载）
-            img_url = ""
-            img_tag = card.find('img')
-            if img_tag:
-                # 优先寻找带有 slike/oglasi 的真实房源图，回避占位图
-                cand = img_tag.get('src') or img_tag.get('data-src') or ''
-                if cand.startswith('//'):
-                    cand = 'https:' + cand
-                elif cand.startswith('/'):
-                    cand = 'https://www.halooglasi.com' + cand
+                img_url = ""
+                img_tag = card.find('img')
+                if img_tag:
+                    cand = img_tag.get('src') or img_tag.get('data-src') or ''
+                    if cand.startswith('//'):
+                        cand = 'https:' + cand
+                    elif cand.startswith('/'):
+                        cand = 'https://www.halooglasi.com' + cand
 
-                if 'slike/oglasi' in cand and 'no-image' not in cand:
-                    img_url = cand
+                    if 'slike/oglasi' in cand and 'no-image' not in cand:
+                        img_url = cand
 
-            # 3. 提取链接与标题
-            link_tag = card.select_one('.product-title a')
-            title = link_tag.text.strip() if link_tag else "贝尔格莱德精选公寓"
-            href = link_tag.get('href', '') if link_tag else ''
-            if href.startswith('/'):
-                href = 'https://www.halooglasi.com' + href
+                link_tag = card.select_one('.product-title a')
+                title = link_tag.text.strip() if link_tag else "贝尔格莱德精选公寓"
+                href = link_tag.get('href', '') if link_tag else ''
+                if href.startswith('/'):
+                    href = 'https://www.halooglasi.com' + href
 
-            # 4. 提取区位/特色信息
-            subtitle = []
-            places = card.select('ul.subtitle-places li')
-            for p in places:
-                t = p.text.strip()
-                if t: subtitle.append(t)
+                subtitle = []
+                places = card.select('ul.subtitle-places li')
+                for p in places:
+                    t = p.text.strip()
+                    if t: subtitle.append(t)
+                
+                features_text = " · ".join(subtitle) if subtitle else "精选户型 · 随时入住"
+
+                items.append({
+                    'id': f"halo_{item_id}",
+                    'source': 'HaloOglasi',
+                    'title': title,
+                    'price': price,
+                    'area_name': '贝尔格莱德',
+                    'structure': '精选户型',
+                    'features': features_text,
+                    'size': None,
+                    'image': img_url or "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=800&q=80",
+                    'publisher': '中介/机构',
+                    'url': href
+                })
+            time.sleep(1)
+        except Exception as e:
+            print(f"HaloOglasi 第 {page} 页抓取失败: {e}")
             
-            features_text = " · ".join(subtitle) if subtitle else "精选户型 · 随时入住"
-
-            items.append({
-                'id': f"halo_{item_id}",
-                'source': 'HaloOglasi',
-                'title': title,
-                'price': price,
-                'area_name': '贝尔格莱德',
-                'structure': '精选户型',
-                'features': features_text,
-                'size': None,
-                'image': img_url or "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=800&q=80",
-                'publisher': '中介/机构',
-                'url': href
-            })
-    except Exception as e:
-        print(f"HaloOglasi 抓取失败: {e}")
     return items
 
 def main():
