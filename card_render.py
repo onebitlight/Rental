@@ -1,297 +1,118 @@
-#!/usr/bin/env python3
-"""
-Belgrade Rental — 微信推送图文卡片生成器 v2
-读取 data/push_pending.json，为每个新增房源生成「左侧缩略图 + 右侧完整信息卡片」。
+# -*- coding: utf-8 -*-
+import os, sys, json, pathlib
+from datetime import datetime
 
-输出:
-    data/card.html        —— 图文卡片 HTML（标题为可点击链接，标题/图片点击跳转房源 URL）
-    data/card.png         —— qlmanage 渲染的整图 PNG（推送到微信）
-    data/card_text.md     —— 精简文本备份（Markdown 链接标题，无裸露 HTTP 纯文本）
+BASE_DIR = pathlib.Path(__file__).parent.resolve()
+DATA_DIR = BASE_DIR / 'data'
 
-每套卡片字段（按需求）：
-    ① 序号 + 区域中英对照（如 ① Vračar 弗拉查尔）
-    €价格/月 · 面积 m² · 房数
-    亮点标签（带停车位 / 独立供暖 / 全配家具 / 楼层 / 独栋等）
-    街道/名称标题（可点击跳转 URL）
+RENT_TYPE = sys.argv[1] if len(sys.argv) > 1 else 'stan'
+DATA_FILE = DATA_DIR / 'push_pending.json' if RENT_TYPE == 'kuca' else DATA_DIR / 'new_items.json'
 
-用法:
-    python3 card_render.py            # 生成卡片(有新增则输出 PNG + 文本)
-    python3 card_render.py --dry      # 只打印将收到的文本与缩略图路径，不渲染
-    python3 card_render.py --html     # 只生成 HTML，不渲染 PNG
-    python3 card_render.py --no-cache # 强制重新下载缩略图
+TODAY_STR = datetime.now().strftime('%Y-%m-%d')
+EXTERNAL_RENT_DIR = pathlib.Path('/Volumes/Data2TB/rent')
 
-依赖: requests, PIL (venv)；渲染用系统 qlmanage
-"""
-import argparse, datetime, json, os, re, subprocess, sys
-from pathlib import Path
+OUTPUT_DIR_NAME = f"{RENT_TYPE}_{TODAY_STR}"
+if EXTERNAL_RENT_DIR.exists() and os.access(EXTERNAL_RENT_DIR, os.W_OK):
+    OUTPUT_DIR = EXTERNAL_RENT_DIR / OUTPUT_DIR_NAME
+else:
+    OUTPUT_DIR = BASE_DIR / 'output' / OUTPUT_DIR_NAME
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE, "data")
-PUSH_PENDING = os.path.join(DATA_DIR, "push_pending.json")
-THUMBS_DIR = os.path.join(DATA_DIR, "thumbs")
-CARD_HTML = os.path.join(DATA_DIR, "card.html")
-CARD_PNG = os.path.join(DATA_DIR, "card.png")
-CARD_TEXT = os.path.join(DATA_DIR, "card_text.md")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-CARD_W = 900          # qlmanage 渲染宽度（对齐手机浏览宽度）
-THUMB = 150           # 方形缩略图边长 px
+def extract_image_url(item):
+    """兼容各种抓取字段名 (image, img, img_url, photo) 并处理 URL"""
+    url = item.get('image') or item.get('img') or item.get('img_url') or item.get('photo') or ''
+    if isinstance(url, list) and len(url) > 0:
+        url = url[0]
+    
+    url = str(url).strip() if url else ''
+    if url.startswith('//'):
+        url = 'https:' + url
+    return url
 
-HDRS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0"}
+def render():
+    if not DATA_FILE.exists():
+        print(f"ℹ️ [{RENT_TYPE.upper()}] 未找到待渲染数据文件: {DATA_FILE}")
+        return
 
-# 区域中英对照表
-AREA_CN = {
-    "Novi Beograd": "新贝尔格莱德", "Zemun": "泽蒙",
-    "Vračar": "弗拉查尔", "Stari grad": "老城区",
-    "Savski venac": "萨夫斯基维纳茨", "Čukarica": "丘卡里察",
-    "Voždovac": "沃日多瓦茨", "Zvezdara": "兹韦兹达拉",
-    "Palilula": "帕利卢拉", "Rakovica": "拉科维察",
-    "Surčin": "苏尔钦",
-}
-
-
-def load_pending() -> list:
-    if not os.path.exists(PUSH_PENDING):
-        return []
     try:
-        with open(PUSH_PENDING) as f:
-            data = json.load(f)
-    except Exception:
-        return []
-    return data if isinstance(data, list) else []
-
-
-def thumb_path(listing: dict) -> str:
-    """下载并裁剪为方形缩略图，返回本地文件路径（无图/失败返回空）。"""
-    photo = (listing.get("photo") or "").strip()
-    if not photo:
-        return ""
-    os.makedirs(THUMBS_DIR, exist_ok=True)
-    lid = str(listing.get("id") or listing.get("url") or "x")
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", lid)[:80]
-    out = os.path.join(THUMBS_DIR, safe + ".jpg")
-    if os.path.exists(out):
-        return out
-    try:
-        import requests
-        from PIL import Image, ImageOps
-        r = requests.get(photo, headers=HDRS, timeout=20)
-        r.raise_for_status()
-        content_type = r.headers.get("Content-Type", "")
-        ext = ".avif" if "avif" in content_type.lower() else ".jpg"
-        tmp = os.path.join(THUMBS_DIR, safe + ext)
-        with open(tmp, "wb") as f:
-            f.write(r.content)
-        im = Image.open(tmp)
-        im = ImageOps.exif_transpose(im)
-        w, h = im.size
-        side = min(w, h)
-        left = (w - side) // 2
-        top = (h - side) // 2
-        im = im.crop((left, top, left + side, top + side)).resize((THUMB, THUMB), Image.LANCZOS)
-        im.convert("RGB").save(out, "JPEG", quality=82)
-        if os.path.exists(tmp) and tmp != out:
-            os.remove(tmp)
-        return out
+        items = json.loads(DATA_FILE.read_text(encoding='utf-8'))
     except Exception as e:
-        print(f"  [thumb] {lid}: failed ({e})", file=sys.stderr)
-        return ""
-
-
-def fmt_price(l: dict) -> str:
-    p = l.get("price")
-    return f"€{p:.0f}" if isinstance(p, (int, float)) else "€?"
-
-
-def area_cn(area: str) -> str:
-    """区域中英对照，如 'Vračar 弗拉查尔'。"""
-    if not area:
-        return ""
-    a = str(area).strip()
-    cn = AREA_CN.get(a)
-    return f"{a} {cn}" if cn else a
-
-
-def highlight_tags(l: dict) -> list:
-    """根据房源特征推断亮点标签。"""
-    tags = []
-    # 停车位
-    if l.get("parking"):
-        tags.append("🅿 带停车位")
-    # 供暖类型
-    heating = (l.get("heating") or "").lower()
-    if any(k in heating for k in ["gas", "gasno"]):
-        tags.append("🔥 燃气供暖")
-    if any(k in heating for k in ["central", "centralno"]):
-        tags.append("🌡 集中供暖")
-    if "TA" in (l.get("heating") or ""):
-        tags.append("⚡ TA电暖")
-    # 全配家具
-    if str(l.get("furnished")) == "1":
-        tags.append("🛋 全配家具")
-    # 独栋
-    desc = (l.get("description") or "") + (l.get("title") or "").lower()
-    if "house" in desc.lower() or "独栋" in desc:
-        tags.append("🏠 独栋")
-    # 楼层
-    floor = str(l.get("floor") or "").upper()
-    floor_map = {"PR": "底层", "VPR": "顶层", "1": "1楼", "2_4": "2-4楼", "5_10": "5-10楼"}
-    if floor in floor_map:
-        tags.append(f"楼层 {floor_map[floor]}")
-    return tags or ["📋 待看房源"]
-
-
-def fmt_info(l: dict) -> str:
-    parts = []
-    s = l.get("size")
-    if isinstance(s, (int, float)):
-        parts.append(f"{s:.0f} m²")
-    r = l.get("rooms")
-    if isinstance(r, (int, float)):
-        parts.append(f"{r:.0f} 房")
-    a = area_cn(l.get("area"))
-    if a:
-        parts.append(a)
-    return " · ".join(parts) if parts else ""
-
-
-def build_html(listings: list) -> tuple:
-    """返回 (html, text)。text 为 Markdown 链接标题的精简文本备份。"""
-    cards = []
-    lines = []
-    # 中文序号：① ② ③ ④ ⑤ ...
-    nums = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"]
-    for i, l in enumerate(listings):
-        thumb = thumb_path(l)
-        num = nums[i] if i < len(nums) else f"{i+1}."
-        street = str(l.get("street") or l.get("title") or "房源")
-        url = str(l.get("url") or "")
-        price = fmt_price(l)
-        info = fmt_info(l)                # "80 m² · 3 房 · Surčin 苏尔钦"
-        tags = highlight_tags(l)
-        tags_html = "".join(f'<span class="tag">{t}</span>' for t in tags)
-        areacn = area_cn(l.get("area"))   # "Surčin 苏尔钦"（保留：标题前导片区仍用它）
-        # 右上角标签改为发布者身份（个人/中介/机构），缺省回退为“中介/机构”
-        pub = str(l.get("publisher") or "").strip() or "中介/机构"
-        pclass = "personal" if pub == "个人" else "agency"
-
-        # 缩略图：有本地文件用 file://，否则留白占位
-        img_html = (f'<img class="thumb" src="file://{thumb}" alt="">'
-                    if thumb else '<div class="thumb ph"></div>')
-        title_html = (f'<a href="{url}" target="_blank" rel="noopener">{street}</a>'
-                      if url else street)
-
-        cards.append(f"""
-        <div class="card">
-          <a class="thumbwrap" href="{url}" target="_blank" rel="noopener">{img_html}</a>
-          <div class="body">
-            <div class="area publisher-{pclass}"><span class="num">{num}</span><span>{pub}</span></div>
-            <div class="ttl">{title_html}</div>
-            <div class="meta"><span class="price">{price}<small>/月</small></span><span class="info">{info}</span></div>
-            <div class="tags">{tags_html}</div>
-          </div>
-        </div>""")
-
-        # 文本备份：标题即链接、无裸露 URL
-        link = f"[{street}]({url})" if url else street
-        price_short = f"{price}/月"
-        info_short = re.sub(r" · [^·]*$", "", fmt_info(l))  # 去掉区域，区域单独放
-        text_line = f"{num} {areacn} · {price_short} · {info_short} · {'/ '.join(tags)} · {link}"
-        # 去掉标签里的 emoji 便于纯文本
-        text_line = re.sub(r"[\U0001F300-\U0001FAFF]|[\u2600-\u27BF]", "", text_line)
-        lines.append(text_line)
-
-    card_body = "\n".join(cards)
-    html = f"""<!DOCTYPE html>
-<html lang="zh"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>贝尔格莱德新房源</title>
-<style>
-  *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{font-family:-apple-system,'Segoe UI',Roboto,'PingFang SC','Hiragino Sans GB',sans-serif;background:#f5f6f8;padding:14px;color:#222}}
-  .card{{background:#fff;border:1px solid #e7e9ee;border-radius:12px;overflow:hidden;display:flex;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
-  .thumbwrap{{flex:0 0 auto;text-decoration:none}}
-  .thumb{{width:{THUMB}px;height:{THUMB}px;object-fit:cover;display:block}}
-  .thumb.ph{{background:#eef1f6}}
-  .body{{flex:1;padding:12px 14px;min-width:0}}
-  .area{{font-size:13px;margin-bottom:4px}}
-  .area .num{{color:#c0392b;font-weight:700;margin-right:4px}}
-  .area.publisher-personal{{color:#1e7d3c}}
-  .area.publisher-agency{{color:#38507e}}
-  .ttl{{font-size:16px;font-weight:700;line-height:1.35;margin-bottom:6px}}
-  .ttl a{{color:#1a2a4a;text-decoration:none}}
-  .ttl a:hover{{text-decoration:underline;color:#2a5a9a}}
-  .meta{{margin-bottom:6px}}
-  .price{{font-size:20px;font-weight:800;color:#c0392b}}
-  .price small{{font-size:12px;color:#999;font-weight:500}}
-  .info{{font-size:13px;color:#556;margin-left:8px}}
-  .tags{{display:flex;flex-wrap:wrap;gap:5px}}
-  .tag{{font-size:11px;background:#eef2fa;color:#38507e;padding:2px 8px;border-radius:99px}}
-</style></head><body>
-{card_body}
-</body></html>"""
-    return html, "\n".join(lines)
-
-
-def render_png(html: str) -> str:
-    """用 qlmanage 把 HTML 渲染成 PNG。返回 PNG 路径或空串。"""
-    html_abs = os.path.abspath(CARD_HTML)
-    data_abs = os.path.abspath(DATA_DIR)
-    with open(html_abs, "w") as f:
-        f.write(html)
-    r = subprocess.run(
-        ["qlmanage", "-t", "-s", str(CARD_W), "-o", data_abs, html_abs],
-        capture_output=True, text=True,
-    )
-    png = html_abs + ".png"
-    if os.path.exists(png):
-        if os.path.abspath(png) != os.path.abspath(CARD_PNG):
-            os.replace(png, os.path.abspath(CARD_PNG))
-        return os.path.abspath(CARD_PNG)
-    print(f"  [render] qlmanage failed rc={r.returncode}:", r.stderr or r.stdout, file=sys.stderr)
-    return ""
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dry", action="store_true")
-    ap.add_argument("--html", action="store_true")
-    ap.add_argument("--no-cache", action="store_true")
-    args = ap.parse_args()
-
-    if args.no_cache:
-        import shutil
-        if os.path.isdir(THUMBS_DIR):
-            shutil.rmtree(THUMBS_DIR)
-
-    listings = load_pending()
-    if not listings:
-        print("EMPTY")
+        print(f"❌ [{RENT_TYPE.upper()}] 读取数据失败: {e}")
         return
 
-    if args.dry:
-        print(f"DRY listings={len(listings)}")
-        for i, l in enumerate(listings):
-            num = ["①","②","③","④","⑤"][i] if i < 5 else f"{i+1}."
-            street = str(l.get("street") or l.get("title"))
-            areacn = area_cn(l.get("area"))
-            price = fmt_price(l)
-            info_short = re.sub(r" · [^·]*$", "", fmt_info(l))
-            tags = ", ".join(re.sub(r"[\U0001F300-\U0001FAFF]|[\u2600-\u27BF]", "", t) for t in highlight_tags(l))
-            print(f"{num} {areacn} · {price}/月 · {info_short} · {tags} · {street}")
-        return
+    cards_html = ""
+    for item in items:
+        img_src = extract_image_url(item)
+        title = item.get('title') or "贝尔格莱德精选房源"
+        url = item.get('url') or "#"
+        area = item.get('area_name') or item.get('location') or "贝尔格莱德"
+        size = item.get('size') or item.get('area') or "未标明"
+        structure = item.get('structure') or item.get('rooms') or "精选"
+        price = item.get('price') or "面议"
+        publisher = item.get('publisher') or "中介/机构"
+        parking = item.get('parking')
 
-    html, text = build_html(listings)
-    with open(CARD_TEXT, "w") as f:
-        f.write(text + "\n")
+        parking_badge = '<span style="background:#e6f7ff;color:#1890ff;padding:2px 6px;border-radius:4px;font-size:12px;">🅿️ 带车位</span>' if parking else ''
 
-    print(f"HTML: {CARD_HTML}")
-    print(f"TEXT: {CARD_TEXT}")
-    if not args.html:
-        png = render_png(html)
-        print(f"PNG:  {png}" if png else "PNG:  (render failed)")
-    print("---TEXT---")
-    print(text)
+        # 优先使用真实抓取图片，若完全缺失则展示漂亮的图标占位
+        if img_src:
+            img_tag = f'<img src="{img_src}" style="width: 140px; height: 100px; object-fit: cover; border-radius: 6px; background: #f0f0f0;" alt="房源缩略图" />'
+        else:
+            img_tag = '<div style="width: 140px; height: 100px; border-radius: 6px; background: #f5f5f5; border: 1px dashed #d9d9d9; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#bfbfbf; font-size:12px;">🏠<span style="margin-top:4px;">暂无图片</span></div>'
 
+        cards_html += f"""
+        <div style="border: 1px solid #e8e8e8; border-radius: 8px; padding: 16px; margin-bottom: 16px; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
+            <div style="display: flex; gap: 16px;">
+                {img_tag}
+                <div style="flex: 1;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16px;"><a href="{url}" target="_blank" style="color: #1890ff; text-decoration: none;">{title}</a></h3>
+                    <p style="margin: 4px 0; color: #595959; font-size: 14px;">
+                        📍 区域: <strong>{area}</strong> | 
+                        📐 面积: {size} m² | 
+                        🚪 房间: {structure} 间
+                    </p>
+                    <p style="margin: 4px 0; font-size: 18px; color: #ff4d4f; font-weight: bold;">
+                        €{price} / 月
+                    </p>
+                    <div style="margin-top: 8px; display: flex; gap: 8px;">
+                        {parking_badge}
+                        <span style="background:#f6ffed;color:#52c41a;padding:2px 6px;border-radius:4px;font-size:12px;">{publisher}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """
 
-if __name__ == "__main__":
-    main()
+    type_name = "公寓 STAN" if RENT_TYPE == 'stan' else "独栋/别墅 KUCA"
+    html_content = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <title>{type_name} 房源列表 - {TODAY_STR}</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }}
+        .container {{ max-width: 800px; margin: 0 auto; }}
+        .header {{ background: #fff; padding: 16px 24px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2 style="margin:0;">🏠 贝尔格莱德 {type_name} 房源汇总 ({TODAY_STR})</h2>
+            <p style="margin:8px 0 0 0; color:#8c8c8c;">共检索到 {len(items)} 套最新符合条件的房源</p>
+        </div>
+        {cards_html}
+    </div>
+</body>
+</html>
+"""
+
+    out_file = OUTPUT_DIR / f'index_{TODAY_STR}.html'
+    out_file.write_text(html_content, encoding='utf-8')
+    print(f"🎉 [{RENT_TYPE.upper()}] 渲染完成！列表已自动生成到:\n{out_file}")
+
+if __name__ == '__main__':
+    render()

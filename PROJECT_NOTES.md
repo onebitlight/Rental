@@ -1,6 +1,6 @@
 # 贝尔格莱德租房项目 — 稳定状态说明
 
-> 最后固化：2026-09-20（git commit `c79c669`）。在此之上迭代时，请先读本文件 + `AGENTS.md`。
+> 最后固化：2026-09-27（统一脚本 run_all.sh 取代 scraper.py）。在此之上迭代时，请先读本文件 + `AGENTS.md`。
 
 ## 0. 版本存档
 
@@ -14,7 +14,10 @@
 
 | 文件 | 作用 |
 |---|---|
-| `scraper.py` | 主爬虫：3 源抓取（CityExpert / HaloOglasi / 4zida）+ 过滤 + 渲染看板 + 详情页 + 微信推送 |
+| `run_all.sh` | **统一入口**（2026-09-27 起取代 scraper.py）：依次跑 `scraper_stan.py`→`card_render.py stan`；`scraper_kuca.py`→`card_render.py kuca` |
+| `scraper_stan.py` | 公寓(Stan)抓取：CityExpert / HaloOglasi 等源 + 过滤 + 写 `data/new_items.json` |
+| `scraper_kuca.py` | 独栋(Kuca)抓取 + 过滤 + 写 `data/push_pending.json` |
+| `card_render.py` | 看板卡片渲染（`<stan|kuca>_<日期>/index_<日期>.html`）；微信图文卡（`data/card.html`/`card.png`/`card_text.md`） |
 | `send_wechat.py` | 独立微信 CLI 推送（`push_all` / `push`），统一通道+超时+重试 |
 | `card_render.py` | 微信图文卡片生成器（`data/card.html` / `card.png` / `card_text.md`） |
 | `friend_push_template.html` | 好友推送模板 |
@@ -23,10 +26,11 @@
 
 ## 2. 关键配置（硬编码常量，无独立 config.json）
 
-`scraper.py` 顶部：
+`scraper_stan.py` / `scraper_kuca.py` / `card_render.py` 顶部：
 - `MIN_PRICE = 350` / `MAX_PRICE = 650` — 价格区间
 - `OUTPUT_BASE`：优先外接盘 `/Volumes/Data2TB/rent`，不可写则回退本地 `BASE_DIR/output`
-- `TODAY_OUTPUT_DIR = OUTPUT_BASE/output_<日期>/`，详情页在 `details/` 子目录
+- **看板路径已改为按类型分目录**：`/Volumes/Data2TB/rent/stan_<日期>/index_<日期>.html`（公寓）、`/Volumes/Data2TB/rent/kuca_<日期>/index_<日期>.html`（独栋）
+- 详情页在各自 `details/` 子目录
 
 `send_wechat.py`：
 - 微信 target `o9cq806ozJVWfuJaD2MrQ0sYqFdI@im.wechat`（用户 sgy9313）
@@ -35,13 +39,14 @@
 ## 3. 运行方式
 
 ```bash
-# 完整跑（抓取 + 渲染 + 推送微信）
-/Users/SGY/BelgradeRentals/.venv/bin/python /Users/SGY/BelgradeRentals/scraper.py
+# 统一入口（抓取 + 渲染看板，公寓+独栋）
+bash ~/BelgradeRentals/run_all.sh
 ```
 
-- **不要**用 `source .venv/bin/activate`（该 venv 的 pip 已损坏，报 No module named cloudscraper）。
-- 每日 02:00 定时抓取，任务 id `aeb1c617-4652-4e80-b820-177469b70816`。
-- 新增判定信号读 `data/push_pending.json`。
+- ⚠️ **旧的 `scraper.py` 已于 2026-09-27 彻底移除**，不再对它监控/调用。
+- 每日 01:00 定时抓取，任务 id `e89c7fb9-e61d-4549-81ba-879bdc1b2403`，指令统一为 `bash ~/BelgradeRentals/run_all.sh`。
+- 生成看板：`/Volumes/Data2TB/rent/stan_<日期>/index_<日期>.html`、`/Volumes/Data2TB/rent/kuca_<日期>/index_<日期>.html`。
+- 新增判定信号读 `data/push_pending.json`（kuca）；公寓数据在 `data/new_items.json`。
 
 ## 4. 三源解析要点（已修复的坑，勿回退）
 
@@ -61,9 +66,10 @@
 ## 5. URL 路径铁律（404 教训）
 
 - **静态服务根目录 = OUTPUT_BASE（`/Volumes/Data2TB/rent`）**，不是今日输出目录。
-- 所以所有外链必须带 `output_<日期>/` 前缀：
-  - 看板：`{public_url}/output_<日期>/index_<日期>.html`
-  - 详情页：`{public_url}/output_<日期>/details/house_N.html`
+- 所以所有外链必须带 `stan_<日期>/` 或 `kuca_<日期>/` 前缀：
+  - 公寓看板：`{public_url}/stan_<日期>/index_<日期>.html`
+  - 独栋看板：`{public_url}/kuca_<日期>/index_<日期>.html`
+  - 详情页：`{public_url}/stan_<日期>/details/house_N.html`（或 kuca_…）
 - 推微信前应自检：`urllib.request.urlopen(链接)` 返回 HTTP 200。
 - Cloudflare 隧道为该 `rent` 目录（`--url http://127.0.0.1:8765`），root 即外接盘 `rent`，无边缘缓存（`cf-cache-status: DYNAMIC`）。
 
@@ -87,3 +93,18 @@
 
 - 纯文本列表：`序号. [来源] 价格€ - 标题` + 详情页链接 + 看板链接。
 - 有新增才推详情；无新增推"暂无新增"静默模板。走 `push_all` 稳定链路。
+
+### 2026-09-24 微信推送维持机制
+- 遇 ret=-2 优先提示用户发消息激活 Session，无需重构代码或修改参数。
+
+## 9. Cloudflare 隧道自动守护（2026-09-25 配置）
+
+- **脚本**: `~/BelgradeRentals/keep_tunnel_alive.sh`（每 30s 检测网络 + 隧道进程 + 域名可达性，失效时自动重启并更新 `logs/guardian_state.json`）
+- **LaunchAgent**: `~/Library/LaunchAgents/com.guardian.tunnel.plist`（RunAtLoad + KeepAlive，Mac 重启自动拉起）
+- **当前公网 URL**: 每次隧道重启会更新，运行时读 `logs/guardian_state.json`
+
+## 10. CityExpert slug 补全修复（commit `7fc2696`，2026-09-25）
+
+- **根因**: 改 `fetch_cityexpert` 适配 ng-state 时丢了 slug，导致房源链接 404
+- **修复**: 用 `street/structure/municipality` 拼接完整 slug 格式，`item_url` 为 `/belgrade/{pid}/{slug}`
+- **注意**: `structure` 偶有 `'OTHER'` 非数字值导致 `X-rooms` 失败，后续需加强容错
