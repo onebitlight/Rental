@@ -31,6 +31,11 @@ else:
 TODAY_OUTPUT_DIR = OUTPUT_BASE / f'stan_{TODAY_STR}'
 TODAY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+# 🎛️ 多业态开关：ENABLE_STAN_SCRAPER = False 表示公寓爬虫已主动停用
+# False 时入口会置空 new_items.json 并跳过抓取（不抓取、不推送）
+# ⚠️ AI Agent 维护时严禁将其设为 True（见 PROJECT_NOTES.md / AGENTS.md）
+ENABLE_STAN_SCRAPER = False
+
 # ==============================================
 # 🎛️ 公寓抓取核心配置项
 # ==============================================
@@ -48,6 +53,10 @@ def load_history():
 
 def save_history(history_set):
     HISTORY_FILE.write_text(json.dumps(list(history_set), ensure_ascii=False, indent=2), encoding='utf-8')
+
+def item_key(item):
+    """全局去重键：优先用 url，其次用 id（property_id），保证跨源不重复。"""
+    return item.get('url') or item.get('id') or ''
 
 def parse_price(val):
     if val is None or isinstance(val, bool):
@@ -221,6 +230,12 @@ def fetch_halooglasi():
     return items
 
 def main():
+    # 🎛️ 多业态开关判断：公寓停用时置空 new_items.json 并跳过抓取
+    if not ENABLE_STAN_SCRAPER:
+        print("🚫 公寓爬虫已主动停用 (ENABLE_STAN_SCRAPER = False)，置空 new_items.json 并跳过抓取。")
+        NEW_ITEMS_FILE.write_text(json.dumps([], ensure_ascii=False, indent=2), encoding='utf-8')
+        return
+
     print(f"🚀 开始精准并发抓取贝尔格莱德公寓 (预算: €{MIN_PRICE} - €{MAX_PRICE})...")
     history = load_history()
 
@@ -228,11 +243,19 @@ def main():
     halo_items = fetch_halooglasi()
 
     all_items = ce_items + halo_items
-    new_items = [item for item in all_items if item['id'] not in history]
+
+    # 全局去重：基于 history（id 与 url 都记录），仅保留真正新增
+    new_items = []
+    for item in all_items:
+        k = item_key(item)
+        if not k or k in history or item['id'] in history:
+            continue
+        new_items.append(item)
 
     print(f"📊 累计抓取房源: {len(all_items)} 套，新增: {len(new_items)} 套")
 
     for item in new_items:
+        history.add(item_key(item))
         history.add(item['id'])
 
     save_history(history)
@@ -241,7 +264,7 @@ def main():
     if new_items:
         push_all(items=new_items, text=f"🏠 【公寓租房日报】今日新增 {len(new_items)} 套符合条件的公寓房源！")
     else:
-        push_all(text="🏠 【公寓租房日报】今日暂无符合条件的新增公寓。")
+        push_all(text="🏠 【公寓租房日报】今日无新增房源，暂无符合条件的公寓。")
 
 if __name__ == '__main__':
     main()

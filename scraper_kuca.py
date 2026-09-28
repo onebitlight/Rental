@@ -13,6 +13,10 @@ PENDING_FILE = os.path.join(DATA_DIR, "push_pending.json")
 
 BASE_URL = "https://estate.onebitlight.xyz"  # 永久公网域名（Cloudflare Zero Trust Tunnel），根映射 /Volumes/Data2TB/rent/
 
+# 🎛️ 多业态开关：ENABLE_KUCA_SCRAPER = True 表示启用独栋爬虫
+# False 时入口会清空 push_pending.json 并直接退出（不抓取、不推送）
+ENABLE_KUCA_SCRAPER = True
+
 
 def load_history_kuca():
     if os.path.exists(HISTORY_KUCA_FILE):
@@ -157,6 +161,13 @@ def fetch_halooglasi_kuca():
     return items
 
 if __name__ == "__main__":
+    # 🎛️ 多业态开关判断：独栋关闭时清空 pending 数据并直接退出
+    if not ENABLE_KUCA_SCRAPER:
+        print("🚫 独栋爬虫已停用 (ENABLE_KUCA_SCRAPER = False)，清空 push_pending.json 后退出。")
+        with open(PENDING_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f, ensure_ascii=False, indent=2)
+        sys.exit(0)
+
     results = fetch_halooglasi_kuca()
 
     # 全局去重：基于 history_kuca.json（id 与 url 都记录），仅保留真正新增
