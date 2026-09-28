@@ -79,12 +79,14 @@ bash ~/BelgradeRentals/run_all.sh kuca
 ## 5. URL 路径铁律（404 教训）
 
 - **静态服务根目录 = OUTPUT_BASE（`/Volumes/Data2TB/rent`）**，不是今日输出目录。
+- **永久公网域名（2026-09-28 起）**：`BASE_URL = "https://estate.onebitlight.xyz"`，由 Cloudflare Zero Trust Tunnel 生产级架构承载（隧道后台服务名 `mac-mini`），已彻底替换旧的不稳定临时 loca.lt 隧道。**禁止再引入/依赖任何临时穿透工具（localtunnel/loca.lt）**。
 - 所以所有外链必须带 `stan_<日期>/` 或 `kuca_<日期>/` 前缀：
-  - 公寓看板：`{public_url}/stan_<日期>/index_<日期>.html`
-  - 独栋看板：`{public_url}/kuca_<日期>/index_<日期>.html`
-  - 详情页：`{public_url}/stan_<日期>/details/house_N.html`（或 kuca_…）
+  - 公寓看板：`{BASE_URL}/stan_<日期>/index_<日期>.html`
+  - 独栋看板：`{BASE_URL}/kuca_<日期>/index_<日期>.html`（例：`https://estate.onebitlight.xyz/kuca_2026-09-28/index.html`）
+  - 详情页：`{BASE_URL}/stan_<日期>/details/house_N.html`（或 kuca_…）
 - 推微信前应自检：`urllib.request.urlopen(链接)` 返回 HTTP 200。
 - Cloudflare 隧道为该 `rent` 目录（`--url http://127.0.0.1:8765`），root 即外接盘 `rent`，无边缘缓存（`cf-cache-status: DYNAMIC`）。
+- ⚠️ `scraper_kuca.py` / `send_wechat.py` 内的 `BASE_URL` 均已统一为 `https://estate.onebitlight.xyz`；任何新增爬虫/报告脚本也必须用它，禁止再用旧 loca.lt 域名。
 
 ## 6. 端口 8765 冲突（勿重蹈）
 
@@ -110,11 +112,14 @@ bash ~/BelgradeRentals/run_all.sh kuca
 ### 2026-09-24 微信推送维持机制
 - 遇 ret=-2 优先提示用户发消息激活 Session，无需重构代码或修改参数。
 
-## 9. Cloudflare 隧道自动守护（2026-09-25 配置）
+## 9. Cloudflare 隧道自动守护（2026-09-28 更新为永久域名）
+
+- **2026-09-28 架构更新**：放弃临时 loca.lt 隧道，改用 **Cloudflare Zero Trust Tunnel** 绑定的永久公网专属域名 `https://estate.onebitlight.xyz`（服务名 `mac-mini`，本地 localhost:8765 映射外接硬盘 `Data2TB/rent/`）。
+- 动态 H5 报告路径格式：`https://estate.onebitlight.xyz/{house_type}_{YYYY-MM-DD}/index.html`（如 `.../kuca_2026-09-28/index.html`）。
 
 - **脚本**: `~/BelgradeRentals/keep_tunnel_alive.sh`（每 30s 检测网络 + 隧道进程 + 域名可达性，失效时自动重启并更新 `logs/guardian_state.json`）
 - **LaunchAgent**: `~/Library/LaunchAgents/com.guardian.tunnel.plist`（RunAtLoad + KeepAlive，Mac 重启自动拉起）
-- **当前公网 URL**: 每次隧道重启会更新，运行时读 `logs/guardian_state.json`
+- **当前公网 URL**: 永久域名 `https://estate.onebitlight.xyz`（不再随隧道重启变化），运行时仍写 `logs/guardian_state.json`
 
 ## 10. CityExpert slug 补全修复（commit `7fc2696`，2026-09-25）
 

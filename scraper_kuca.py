@@ -7,6 +7,31 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# 全局历史去重文件：记录已见过的 property_id / url，跨日全量判重
+HISTORY_KUCA_FILE = os.path.join(DATA_DIR, "history_kuca.json")
+PENDING_FILE = os.path.join(DATA_DIR, "push_pending.json")
+
+BASE_URL = "https://estate.onebitlight.xyz"  # 永久公网域名（Cloudflare Zero Trust Tunnel），根映射 /Volumes/Data2TB/rent/
+
+
+def load_history_kuca():
+    if os.path.exists(HISTORY_KUCA_FILE):
+        try:
+            with open(HISTORY_KUCA_FILE, 'r', encoding='utf-8') as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+
+def save_history_kuca(hist):
+    with open(HISTORY_KUCA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(list(hist), f, ensure_ascii=False, indent=2)
+
+def item_global_key(item):
+    """全局去重键：优先用完整 url，其次用 id（property_id）。"""
+    return (item.get('url') or '').strip() or (item.get('id') or '').strip()
+
 # ==============================================
 # 🎛️ 独栋抓取核心配置项（可在此自由调整）
 # ==============================================
@@ -133,7 +158,27 @@ def fetch_halooglasi_kuca():
 
 if __name__ == "__main__":
     results = fetch_halooglasi_kuca()
-    pending_file = os.path.join(BASE_DIR, "data", "push_pending.json")
-    with open(pending_file, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-    print(f"✅ 独栋抓取完成！在 €{MIN_PRICE}-€{MAX_PRICE} 预算内共提取到 {len(results)} 条数据。")
+
+    # 全局去重：基于 history_kuca.json（id 与 url 都记录），仅保留真正新增
+    history = load_history_kuca()
+    new_items = []
+    for item in results:
+        k = item_global_key(item)
+        if not k or k in history or item['id'] in history:
+            continue
+        new_items.append(item)
+
+    # 把新增写入历史，供后续全量判重
+    for item in new_items:
+        history.add(item_global_key(item))
+        history.add(item['id'])
+    save_history_kuca(history)
+
+    # push_pending.json 只保留真正新增（无新增则写空数组，避免重复推送历史房源）
+    with open(PENDING_FILE, "w", encoding="utf-8") as f:
+        json.dump(new_items, f, ensure_ascii=False, indent=2)
+
+    if new_items:
+        print(f"✅ 独栋抓取完成！€{MIN_PRICE}-€{MAX_PRICE} 预算内共提取 {len(results)} 条，新增 {len(new_items)} 条（其余已在历史库中）。")
+    else:
+        print(f"📭 今日无新增独栋房源（抓取 {len(results)} 条均已在历史库中），push_pending.json 已置空。")
