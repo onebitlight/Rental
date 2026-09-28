@@ -17,7 +17,7 @@ from datetime import datetime
 # ============================================================
 WECHAT_TARGET = "o9cq806ozJVWfuJaD2MrQ0sYqFdI@im.wechat"
 CHANNEL = "openclaw-weixin"
-BASE_URL = "https://belgrade-rent-sgy.loca.lt"
+BASE_URL = "https://estate.onebitlight.xyz"
 
 
 def get_today_url(house_type="kuca"):
