@@ -11,11 +11,15 @@ os.makedirs(DATA_DIR, exist_ok=True)
 HISTORY_KUCA_FILE = os.path.join(DATA_DIR, "history_kuca.json")
 PENDING_FILE = os.path.join(DATA_DIR, "push_pending.json")
 
-BASE_URL = "https://estate.onebitlight.xyz"  # 永久公网域名（Cloudflare Zero Trust Tunnel），根映射 /Volumes/Data2TB/rent/
+BASE_URL = "https://estate.onebitlight.xyz"  # 永久公网域名（Cloudflare Zero Trust Tunnel）
 
 # 🎛️ 多业态开关：ENABLE_KUCA_SCRAPER = True 表示启用独栋爬虫
-# False 时入口会清空 push_pending.json 并直接退出（不抓取、不推送）
 ENABLE_KUCA_SCRAPER = True
+
+# 拟真 User-Agent 头（提升反爬稳定性）
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+}
 
 
 def load_history_kuca():
@@ -69,6 +73,7 @@ def detect_area(blob):
 def fetch_halooglasi_kuca():
     items = []
     sc = cloudscraper.create_scraper()
+    sc.headers.update(DEFAULT_HEADERS)
     
     # 支持多页翻页抓取
     for page in range(1, MAX_PAGES + 1):
@@ -160,13 +165,13 @@ def fetch_halooglasi_kuca():
             
     return items
 
-if __name__ == "__main__":
-    # 🎛️ 多业态开关判断：独栋关闭时清空 pending 数据并直接退出
+def main():
+    # 🎛️ 多业态开关判断：独栋关闭时清空 pending 数据，优雅 return 退出
     if not ENABLE_KUCA_SCRAPER:
         print("🚫 独栋爬虫已停用 (ENABLE_KUCA_SCRAPER = False)，清空 push_pending.json 后退出。")
         with open(PENDING_FILE, "w", encoding="utf-8") as f:
             json.dump([], f, ensure_ascii=False, indent=2)
-        sys.exit(0)
+        return
 
     results = fetch_halooglasi_kuca()
 
@@ -193,3 +198,6 @@ if __name__ == "__main__":
         print(f"✅ 独栋抓取完成！€{MIN_PRICE}-€{MAX_PRICE} 预算内共提取 {len(results)} 条，新增 {len(new_items)} 条（其余已在历史库中）。")
     else:
         print(f"📭 今日无新增独栋房源（抓取 {len(results)} 条均已在历史库中），push_pending.json 已置空。")
+
+if __name__ == "__main__":
+    main()

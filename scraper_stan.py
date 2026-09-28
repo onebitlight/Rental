@@ -32,9 +32,13 @@ TODAY_OUTPUT_DIR = OUTPUT_BASE / f'stan_{TODAY_STR}'
 TODAY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # 🎛️ 多业态开关：ENABLE_STAN_SCRAPER = False 表示公寓爬虫已主动停用
-# False 时入口会置空 new_items.json 并跳过抓取（不抓取、不推送）
 # ⚠️ AI Agent 维护时严禁将其设为 True（见 PROJECT_NOTES.md / AGENTS.md）
 ENABLE_STAN_SCRAPER = False
+
+# 拟真 User-Agent 头（提升反爬稳定性）
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+}
 
 # ==============================================
 # 🎛️ 公寓抓取核心配置项
@@ -82,6 +86,7 @@ def fetch_cityexpert():
     url = f"https://cityexpert.rs/en/properties-for-rent/belgrade?ptypeid=1&priceFrom={MIN_PRICE}&priceTo={MAX_PRICE}"
     try:
         scraper = cloudscraper.create_scraper()
+        scraper.headers.update(DEFAULT_HEADERS)
         r = scraper.get(url, timeout=20)
         if r.status_code != 200:
             return items
@@ -154,6 +159,7 @@ def fetch_halooglasi():
     """2. HaloOglasi 专属提取逻辑（支持多页翻页抓取）"""
     items = []
     scraper = cloudscraper.create_scraper()
+    scraper.headers.update(DEFAULT_HEADERS)
     
     for page in range(1, MAX_PAGES + 1):
         url = f"https://www.halooglasi.com/nekretnine/izdavanje-stanova/beograd?cena_d_eur={MAX_PRICE}&cena_od_eur={MIN_PRICE}&page={page}"
@@ -230,7 +236,7 @@ def fetch_halooglasi():
     return items
 
 def main():
-    # 🎛️ 多业态开关判断：公寓停用时置空 new_items.json 并跳过抓取
+    # 🎛️ 多业态开关判断：公寓停用时置空 new_items.json 并优雅 return 退出
     if not ENABLE_STAN_SCRAPER:
         print("🚫 公寓爬虫已主动停用 (ENABLE_STAN_SCRAPER = False)，置空 new_items.json 并跳过抓取。")
         NEW_ITEMS_FILE.write_text(json.dumps([], ensure_ascii=False, indent=2), encoding='utf-8')
