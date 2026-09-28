@@ -110,7 +110,8 @@ def render():
 </html>
 """
 
-    out_file = OUTPUT_DIR / f'index_{TODAY_STR}.html'
+    # 统一输出文件名 index.html（按类型分目录，子文件夹名为 stan_<日期> / kuca_<日期>）
+    out_file = OUTPUT_DIR / 'index.html'
     out_file.write_text(html_content, encoding='utf-8')
     print(f"🎉 [{RENT_TYPE.upper()}] 渲染完成！列表已自动生成到:\n{out_file}")
 
