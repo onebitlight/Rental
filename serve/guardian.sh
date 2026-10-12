@@ -12,7 +12,7 @@ set +e
 PORT=8765
 ROOT_DIR="/Volumes/Data2TB/rent"
 CF="/usr/local/bin/cloudflared"
-LOG_DIR="/Users/SGY/BelgradeRentals/logs"
+LOG_DIR="/Users/SGY/Projects/BelgradeEstate/logs"
 ULOG="$LOG_DIR/tunnel_url.txt"
 STATE="$LOG_DIR/guardian_state.json"
 mkdir -p "$LOG_DIR"

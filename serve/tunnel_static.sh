@@ -1,7 +1,7 @@
 #!/bin/bash
 # cloudflared 隧道守护脚本 — 把本地 8765 端口暴露到公网
 # 由 launchd 常驻守护：进程退出/隧道中断会自动重启并重新获取新 URL
-LOG_DIR="/Users/SGY/BelgradeRentals/logs"
+LOG_DIR="/Users/SGY/Projects/BelgradeEstate/logs"
 ULOG="$LOG_DIR/tunnel_url.txt"
 mkdir -p "$LOG_DIR"
 
@@ -24,7 +24,7 @@ while true; do
   # 生成固定格式的 URL 日志（命名隧道启用时改为你的固定域名）
   if [ -n "$CF_TUNNEL_NAME" ] && [ -n "$CLOUDFLARED_TUNNEL_ID" ]; then
     echo "https://rent.example.com" > "$ULOG"
-    exec "$CF" tunnel --config /Users/SGY/BelgradeRentals/serve/cloudflared.yml run "$CF_TUNNEL_NAME"
+    exec "$CF" tunnel --config /Users/SGY/Projects/BelgradeEstate/serve/cloudflared.yml run "$CF_TUNNEL_NAME"
   else
     # trycloudflare 临时隧道：解析新 URL 写入日志
     "$CF" tunnel --url http://127.0.0.1:8765 --no-autoupdate \

@@ -5,7 +5,7 @@
 #       用显式 --directory 参数指定根目录。
 ROOT_DIR="${RENT_ROOT:-/Volumes/Data2TB/rent}"
 PORT="${RENT_PORT:-8765}"
-LOG_DIR="/Users/SGY/BelgradeRentals/logs"
+LOG_DIR="/Users/SGY/Projects/BelgradeEstate/logs"
 mkdir -p "$LOG_DIR"
 
 # 等待外接硬盘挂载（最多等 90 秒，避免开机时硬盘未就绪导致启动失败）
