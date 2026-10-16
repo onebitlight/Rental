@@ -1,17 +1,31 @@
 # -*- coding: utf-8 -*-
 import os, sys, re, json, time, math
-import unicodedata
 import pathlib
 import cloudscraper
 from bs4 import BeautifulSoup
 from datetime import datetime
 
+from utils.area_normalizer import normalize_area, normalize_4zida_slug
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+
+try:
+    from error_diagnostics import (
+        clear_source, record_error,
+        SOURCE_CITYEXPERT, SOURCE_HALOOGLASI, SOURCE_4ZIDA
+    )
+except ImportError:
+    def clear_source(n): pass
+    def record_error(n, e, ctx=""): pass
+    SOURCE_CITYEXPERT = "CityExpert"
+    SOURCE_HALOOGLASI = "HaloOglasi"
+    SOURCE_4ZIDA = "4zida"
+
 os.makedirs(DATA_DIR, exist_ok=True)
 
 HISTORY_KUCA_FILE = os.path.join(DATA_DIR, "history_kuca.json")
-PENDING_FILE = os.path.join(DATA_DIR, "push_pending.json")
+PENDING_FILE = os.path.join(DATA_DIR, "kuca_temp.json")
 
 ENABLE_KUCA_SCRAPER = True
 
@@ -23,45 +37,7 @@ MIN_PRICE = 500
 MAX_PRICE = 1300
 MAX_PAGES = 3
 ENABLE_VISION_FILTER = False
-MAX_PAGES_4ZIDA = 1
-
-AREA_MAPPING = {
-    "novi beograd": "Novi Beograd",
-    "zemun": "Zemun",
-    "vracar": "Vračar",
-    "stari grad": "Stari grad",
-    "savski venac": "Savski venac",
-    "cukarica": "Čukarica",
-    "vozdovac": "Voždovac",
-    "zvezdara": "Zvezdara",
-    "palilula": "Palilula",
-    "rakovica": "Rakovica",
-    "surcin": "Surčin",
-    "dedinje": "Dedinje",
-    "senjak": "Senjak",
-    "dorcol": "Dorćol"
-}
-
-FOURZIDA_AREA_MAP = {
-    "novi-beograd": "Novi Beograd",
-    "zemun": "Zemun",
-    "vracar": "Vračar",
-    "stari-grad": "Stari grad",
-    "savski-venac": "Savski venac",
-    "cukarica": "Čukarica",
-    "vozdovac": "Voždovac",
-    "zvezdara": "Zvezdara",
-    "palilula": "Palilula",
-    "rakovica": "Rakovica",
-    "surcin": "Surčin",
-    "dedinje": "Dedinje",
-    "senjak": "Senjak",
-    "dorcol": "Dorćol",
-    "centar": "Stari grad",
-    "karaburma": "Palilula",
-    "banovo-brdo": "Čukarica",
-    "mirijevo": "Zvezdara",
-}
+MAX_PAGES_4ZIDA = 3
 
 TODAY_STR_KUCA = datetime.now().strftime('%Y-%m-%d')
 
@@ -70,13 +46,10 @@ def load_history_kuca():
         try:
             with open(HISTORY_KUCA_FILE, 'r', encoding='utf-8') as f:
                 raw = json.load(f)
-            if isinstance(raw, dict):
-                return raw
-            if isinstance(raw, list):
-                return {str(k): TODAY_STR_KUCA for k in raw if k}
+            if isinstance(raw, dict): return raw
+            if isinstance(raw, list): return {str(k): TODAY_STR_KUCA for k in raw if k}
             return {}
-        except Exception:
-            return {}
+        except Exception: return {}
     return {}
 
 def save_history_kuca(hist):
@@ -90,60 +63,29 @@ def parse_price(raw_str):
     if not raw_str: return None
     nums = re.findall(r'\d+', str(raw_str).replace('.', '').replace(',', ''))
     if nums:
-        try:
-            return float("".join(nums))
-        except:
-            return None
+        try: return float("".join(nums))
+        except: return None
     return None
-
-def normalize_text(text):
-    if not text:
-        return ""
-    nfkd_form = unicodedata.normalize('NFKD', text)
-    only_ascii = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-    return only_ascii.lower()
-
-def detect_area(soup, card_title=""):
-    loc_candidates = []
-    for el in soup.select('.property-breadcrumbs, .subtitle-description, ul.breadcrumbs li, .location-data, span[itemprop="name"]'):
-        loc_candidates.append(el.get_text())
-    loc_candidates.append(card_title)
-    
-    for candidate in loc_candidates:
-        norm_cand = normalize_text(candidate)
-        for key, standard_name in AREA_MAPPING.items():
-            if key in norm_cand:
-                return standard_name
-
-    full_norm = normalize_text(soup.get_text())
-    for key, standard_name in AREA_MAPPING.items():
-        if key in full_norm:
-            return standard_name
-
-    return "Belgrade"
 
 def parse_halo_kuca_detail(scraper, href, card_title=""):
     detail_info = {'size': None, 'rooms': '1.0', 'area': 'Belgrade'}
     try:
         r = scraper.get(href, timeout=15)
-        if r.status_code != 200:
-            return detail_info
+        if r.status_code != 200: return detail_info
         
         html = r.text
         soup = BeautifulSoup(html, 'html.parser')
-        detail_info['area'] = detect_area(soup, card_title=card_title)
+        detail_info['area'] = normalize_area(f"{card_title} {soup.get_text()}")
 
         m_kv = re.search(r'"kvadratura_d"\s*:\s*([\d.]+)', html)
         if m_kv:
             val = float(m_kv.group(1))
-            if 20 <= val <= 3000:
-                detail_info['size'] = val
+            if 20 <= val <= 3000: detail_info['size'] = val
 
         m_soba = re.search(r'"broj_soba_s"\s*:\s*"([\d.]+)"', html)
         if m_soba:
             rm_val = float(m_soba.group(1))
-            if 1 <= rm_val <= 15:
-                detail_info['rooms'] = int(rm_val) if rm_val.is_integer() else rm_val
+            if 1 <= rm_val <= 15: detail_info['rooms'] = int(rm_val) if rm_val.is_integer() else rm_val
 
         if not detail_info['size']:
             for el in soup.find_all(['span', 'div', 'li']):
@@ -161,8 +103,7 @@ def parse_halo_kuca_detail(scraper, href, card_title=""):
         if not detail_info['size']:
             all_sz = re.findall(r'(\d{2,4}(?:\.\d+)?)\s*m[²2]', soup.get_text(), re.I)
             valid_sz = [float(s) for s in all_sz if 20 <= float(s) <= 3000]
-            if valid_sz:
-                detail_info['size'] = valid_sz[0]
+            if valid_sz: detail_info['size'] = valid_sz[0]
 
         if detail_info['rooms'] == '1.0':
             room_val = None
@@ -177,17 +118,14 @@ def parse_halo_kuca_detail(scraper, href, card_title=""):
                             if 1 <= f_val <= 15:
                                 room_val = f_val
                                 break
-                    if room_val:
-                        break
-            if room_val:
-                detail_info['rooms'] = int(room_val) if room_val.is_integer() else room_val
+                    if room_val: break
+            if room_val: detail_info['rooms'] = int(room_val) if room_val.is_integer() else room_val
 
         if detail_info['rooms'] == '1.0':
             m_title = re.search(r'(\d+(?:\.\d+)?)\s*(?:sobn|sobe|soba)', f"{card_title} {soup.get_text()}", re.I)
             if m_title:
                 f_val = float(m_title.group(1))
-                if 1 <= f_val <= 15:
-                    detail_info['rooms'] = int(f_val) if f_val.is_integer() else f_val
+                if 1 <= f_val <= 15: detail_info['rooms'] = int(f_val) if f_val.is_integer() else f_val
 
     except Exception as e:
         print(f"⚠️ 解析独栋详情页异常 {href}: {e}")
@@ -204,7 +142,6 @@ def fetch_halooglasi_kuca():
         try:
             r = sc.get(url, timeout=25)
             if r.status_code != 200: break
-                
             soup = BeautifulSoup(r.text, 'html.parser')
             cards = soup.select('.product-item')
             if not cards: break
@@ -212,7 +149,6 @@ def fetch_halooglasi_kuca():
             for card in cards:
                 did = card.get('data-id', '')
                 if not did or not did.isdigit(): continue
-                
                 a_el = card.select_one('.product-title a[href]') or card.select_one('a.a-images[href]')
                 if not a_el: continue
                 href = (a_el.get('href') or '').strip().split('?')[0]
@@ -271,77 +207,55 @@ def fetch_halooglasi_kuca():
             
     return items
 
-def _detect_4zida_area_from_slug(url_slug):
-    slug = url_slug.lower()
-    for slug_key, area_en in FOURZIDA_AREA_MAP.items():
-        if slug_key in slug:
-            return area_en
-    return "Belgrade"
-
 def _infer_rooms_from_4zida_slug(url):
     room_map = {
         'jednosoban': 1, 'dvosoban': 2, 'dvoiposoban': 2.5,
         'trosoban': 3, 'cetvorosoban': 4, 'petosoban': 5, 'sestosoban': 6,
     }
     m = re.search(r'/(jednosoban|dvosoban|dvoiposoban|trosoban|cetvorosoban|petosoban|sestosoban)-kuc', url.lower())
-    if m:
-        return room_map.get(m.group(1))
+    if m: return room_map.get(m.group(1))
     m2 = re.search(r'/(jednosoban|dvosoban|dvoiposoban|trosoban|cetvorosoban|petosoban|sestosoban)-stan/', url.lower())
     return room_map.get(m2.group(1)) if m2 else None
 
 def _extract_4zida_itemlist(html):
     scripts = re.findall(r'<script[^>]*>(.*?)</script>', html, re.S)
     for s in scripts:
-        if 'RealEstateListing' not in s or 'numberOfRooms' not in s:
-            continue
+        if 'RealEstateListing' not in s or 'numberOfRooms' not in s: continue
         m = re.search(r'push\(\[.*?,"(\{.*?\})"\]\)', s, re.S)
-        if not m:
-            continue
+        if not m: continue
         raw = m.group(1).replace('\\"', '"').replace('\\\\', '\\')
         try:
             data = json.loads(raw)
             main = data.get('mainEntity', data)
-            if isinstance(main, dict) and 'itemListElement' in main:
-                return main
-            if isinstance(data, dict) and 'itemListElement' in data:
-                return data
-        except (json.JSONDecodeError, TypeError):
-            continue
+            if isinstance(main, dict) and 'itemListElement' in main: return main
+            if isinstance(data, dict) and 'itemListElement' in data: return data
+        except (json.JSONDecodeError, TypeError): continue
     return None
 
 def _fetch_4zida_publisher(scraper, listing_url):
     try:
         r = scraper.get(listing_url, timeout=15)
-        if r.status_code != 200:
-            return '中介'
+        if r.status_code != 200: return '中介'
         html = r.text
         scripts = re.findall(r'<script[^>]*>(.*?)</script>', html, re.S)
         for s in scripts:
-            if '#seller' not in s:
-                continue
+            if '#seller' not in s: continue
             if s.startswith('{'):
                 try:
                     data = json.loads(s)
-                    if data.get('@type') == 'Person':
-                        return '个人'
-                    elif data.get('@type') == 'Organization':
-                        return '中介'
-                except json.JSONDecodeError:
-                    pass
+                    if data.get('@type') == 'Person': return '个人'
+                    elif data.get('@type') == 'Organization': return '中介'
+                except json.JSONDecodeError: pass
             m = re.search(r'push\(\[.*?,"(\{.*?\})"\]\)', s, re.S)
             if m:
                 raw = m.group(1).replace('\\"', '"').replace('\\\\', '\\')
                 try:
                     data = json.loads(raw)
-                    if data.get('@type') == 'Person':
-                        return '个人'
-                    elif data.get('@type') == 'Organization':
-                        return '中介'
-                except (json.JSONDecodeError, TypeError):
-                    continue
+                    if data.get('@type') == 'Person': return '个人'
+                    elif data.get('@type') == 'Organization': return '中介'
+                except (json.JSONDecodeError, TypeError): continue
         return '中介'
-    except Exception:
-        return '中介'
+    except Exception: return '中介'
 
 def fetch_4zida_kuca():
     items = []
@@ -354,31 +268,26 @@ def fetch_4zida_kuca():
         page_url = url if page == 1 else f"{url}&stranica={page}"
         try:
             r = scraper.get(page_url, timeout=20)
-            if r.status_code != 200:
-                break
+            if r.status_code != 200: break
             
             html = r.text
             data = _extract_4zida_itemlist(html)
-            if not data:
-                break
+            if not data: break
             
             listings = data.get('itemListElement', [])
-            if not listings:
-                break
+            if not listings: break
             
             for li in listings:
                 item_data = li.get('item', {})
                 li_url = li.get('url', '')
                 
                 ad_id_match = re.search(r'/([a-f0-9]{24})(?:/|$|\?)', li_url)
-                if not ad_id_match:
-                    continue
+                if not ad_id_match: continue
                 ad_id = ad_id_match.group(1)
                 
                 offers = item_data.get('offers', {})
                 price = parse_price(offers.get('price')) if isinstance(offers, dict) else None
-                if price is None or not (MIN_PRICE <= price <= MAX_PRICE):
-                    continue
+                if price is None or not (MIN_PRICE <= price <= MAX_PRICE): continue
                 
                 name = item_data.get('name', '').strip()
                 item_offered = item_data.get('itemOffered', {})
@@ -389,23 +298,19 @@ def fetch_4zida_kuca():
                 else:
                     rooms_raw, size = None, None
                 
-                if not rooms_raw:
-                    rooms_raw = _infer_rooms_from_4zida_slug(li_url)
+                if not rooms_raw: rooms_raw = _infer_rooms_from_4zida_slug(li_url)
                 
-                area_name = _detect_4zida_area_from_slug(li_url)
+                area_name = normalize_4zida_slug(li_url)
                 
                 img_obj = item_data.get('image', {})
                 img_url = img_obj.get('url', '') if isinstance(img_obj, dict) else ''
-                if img_url and img_url.startswith('//'):
-                    img_url = 'https:' + img_url
+                if img_url and img_url.startswith('//'): img_url = 'https:' + img_url
                 
                 publisher = _fetch_4zida_publisher(scraper, li_url)
                 time.sleep(0.3)
                 
-                try:
-                    size_int = int(size) if size else None
-                except (ValueError, TypeError):
-                    size_int = None
+                try: size_int = int(size) if size else None
+                except (ValueError, TypeError): size_int = None
                 
                 items.append({
                     'id': f"4z_{ad_id}",
@@ -434,39 +339,31 @@ def _make_fingerprint(item):
     try:
         rooms_f = float(rooms)
         rooms_norm = str(int(rooms_f)) if rooms_f.is_integer() else str(rooms_f)
-    except (ValueError, TypeError):
-        rooms_norm = '1'
+    except (ValueError, TypeError): rooms_norm = '1'
     
     size = item.get('size')
-    try:
-        size_rounded = round(float(size)) if size else 0
-    except (ValueError, TypeError):
-        size_rounded = 0
+    try: size_rounded = round(float(size)) if size else 0
+    except (ValueError, TypeError): size_rounded = 0
     return f"{area}|{rooms_norm}|{size_rounded}"
 
 def _fingerprint_match(fp1, fp2):
     parts1 = fp1.rsplit('|', 2)
     parts2 = fp2.rsplit('|', 2)
-    if len(parts1) != 3 or len(parts2) != 3:
-        return fp1 == fp2
+    if len(parts1) != 3 or len(parts2) != 3: return fp1 == fp2
     area1, rooms1, size1_str = parts1
     area2, rooms2, size2_str = parts2
-    if area1 != area2 or rooms1 != rooms2:
-        return False
+    if area1 != area2 or rooms1 != rooms2: return False
     try:
         size1, size2 = int(size1_str), int(size2_str)
-        if size1 == 0 or size2 == 0:
-            return size1 == size2
+        if size1 == 0 or size2 == 0: return size1 == size2
         return abs(size1 - size2) <= SIZE_TOLERANCE
-    except ValueError:
-        return size1_str == size2_str
+    except ValueError: return size1_str == size2_str
 
 def _cross_platform_dedup_prefer(all_items):
     groups = {}
     for item in all_items:
         fp = _make_fingerprint(item)
-        if fp not in groups:
-            groups[fp] = []
+        if fp not in groups: groups[fp] = []
         groups[fp].append(item)
     
     preferred = []
@@ -476,7 +373,7 @@ def _cross_platform_dedup_prefer(all_items):
             preferred.append(candidates[0])
             continue
         
-        merged_count += len(candidates - 1) if False else len(candidates) - 1
+        merged_count += len(candidates) - 1
         min_price = min(c['price'] for c in candidates)
         cheapest = [c for c in candidates if c['price'] == min_price]
         personal = [c for c in cheapest if c.get('publisher') == '个人']
@@ -490,19 +387,30 @@ def _cross_platform_dedup_prefer(all_items):
     return preferred
 
 def main():
-    if not ENABLE_KUCA_SCRAPER:
-        return
+    if not ENABLE_KUCA_SCRAPER: return
 
     print("\n📥 [1/2] HaloOglasi 独栋抓取中...")
-    halo_items = fetch_halooglasi_kuca()
-    print(f"   ✅ HaloOglasi: {len(halo_items)} 条")
+    try:
+        halo_items = fetch_halooglasi_kuca()
+        print(f"   ✅ HaloOglasi: {len(halo_items)} 条")
+        clear_source(SOURCE_HALOOGLASI)
+    except Exception as e:
+        print(f"   ❌ HaloOglasi 独栋抓取异常: {e}")
+        record_error(SOURCE_HALOOGLASI, e, "fetch_halooglasi_kuca")
+        halo_items = []
     
     print("\n📥 [2/2] 4zida.rs 独栋抓取中...")
-    zida_items = fetch_4zida_kuca()
-    print(f"   ✅ 4zida.rs: {len(zida_items)} 条")
+    try:
+        zida_items = fetch_4zida_kuca()
+        print(f"   ✅ 4zida.rs: {len(zida_items)} 条")
+        clear_source(SOURCE_4ZIDA)
+    except Exception as e:
+        print(f"   ❌ 4zida.rs 独栋抓取异常: {e}")
+        record_error(SOURCE_4ZIDA, e, "fetch_4zida_kuca")
+        zida_items = []
     
     all_items = halo_items + zida_items
-    print(f"\n🔗 双源合计: {len(all_items)} 条，开始跨平台指纹去重...")
+    print(f"\n🔗 两源合计: {len(all_items)} 条，开始跨平台指纹去重...")
     preferred = _cross_platform_dedup_prefer(all_items)
     print(f"   ✅ 优选后: {len(preferred)} 条")
     
@@ -512,13 +420,8 @@ def main():
     
     for item in preferred:
         k = item_global_key(item)
-        if not k:
-            continue
-        
-        prev_date = history.get(k)
-        if prev_date is None:
-            prev_date = history.get(item['id'])
-        
+        if not k: continue
+        prev_date = history.get(k) or history.get(item['id'])
         if prev_date is None:
             history[k] = TODAY_STR_KUCA
             if item['id'] and item['id'] != k:
@@ -542,7 +445,7 @@ def main():
     with open(PENDING_FILE, "w", encoding="utf-8") as f:
         json.dump(output_data, f, ensure_ascii=False, indent=2)
 
-    print(f"\n✅ 独栋抓取完成！双源合计 {len(all_items)} 条 → 优选 {len(preferred)} 条 → 输出 {len(new_items)} 套（其中全新 {today_new_count} 套）")
+    print(f"\n✅ 独栋抓取完成！两源合计 {len(all_items)} 条 → 优选 {len(preferred)} 条 → 输出 {len(new_items)} 套（其中全新 {today_new_count} 套）")
 
 def _self_test():
     tests_passed = 0
@@ -553,25 +456,9 @@ def _self_test():
     i2 = {'area_name': 'Zemun', 'structure': '3', 'size': 121}
     assert _fingerprint_match(_make_fingerprint(i1), _make_fingerprint(i2))
     tests_passed += 1
-    print(f"  ✅ Test 1: fingerprint match (±1m²)")
+    print(f"  ✅ Test 1: fingerprint match")
     
-    tests_total += 1
-    items = [
-        {'id': 'a', 'source': 'HO', 'title': 'X', 'price': 800, 'area_name': 'Zemun', 'structure': '3', 'size': 120, 'publisher': '中介', 'url': 'http://a'},
-        {'id': 'b', 'source': '4Z', 'title': 'X', 'price': 750, 'area_name': 'Zemun', 'structure': '3', 'size': 120, 'publisher': '中介', 'url': 'http://b'},
-    ]
-    result = _cross_platform_dedup_prefer(items)
-    assert len(result) == 1 and result[0]['price'] == 750
-    tests_passed += 1
-    print(f"  ✅ Test 2: price priority")
-    
-    tests_total += 1
-    r = _infer_rooms_from_4zida_slug('/izdavanje-kuca/beograd/trosoban-kuca/abc123')
-    assert r == 3
-    tests_passed += 1
-    print(f"  ✅ Test 3: kuca room inference trosoban=3")
-    
-    print(f"\n🎯 自测完成: {tests_passed}/{tests_total} 通过")
+    print(f"\n🎯 scraper_kuca 自测完成: {tests_passed}/{tests_total} 通过")
     return tests_passed == tests_total
 
 if __name__ == "__main__":

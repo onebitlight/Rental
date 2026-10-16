@@ -10,11 +10,11 @@ if RENT_TYPE not in ['kuca', 'stan', 'lokal']:
     RENT_TYPE = 'kuca'
 
 if RENT_TYPE == 'kuca':
-    DATA_FILE = DATA_DIR / 'push_pending.json'
+    DATA_FILE = DATA_DIR / 'kuca_temp.json'
 elif RENT_TYPE == 'lokal':
-    DATA_FILE = DATA_DIR / 'lokal_items.json'
+    DATA_FILE = DATA_DIR / 'lokal_temp.json'
 else:
-    DATA_FILE = DATA_DIR / 'new_items.json'
+    DATA_FILE = DATA_DIR / 'stan_temp.json'
 
 TODAY_STR = datetime.now().strftime('%Y-%m-%d')
 
@@ -91,7 +91,6 @@ def update_root_index():
             </a>
 '''
 
-    # 🎯 总列表页面：恢复经典的深紫色渐变背景
     html = f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -102,7 +101,7 @@ def update_root_index():
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 16px; }}
         .container {{ max-width: 700px; margin: 0 auto; width: 100%; }}
-        .hero {{ background: rgba(255,255,255,0.95); border-radius: 16px; padding: 24px 20px; margin-bottom: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); text-align: center; }}
+        .hero {{ background: rgba(255,255,255,0.95); border-radius: 16px; padding: 22px 20px; margin-bottom: 20px; box-shadow: 0 8px 32px rgba(0,0,0,0.12); text-align: center; }}
         .hero h1 {{ font-size: 24px; color: #1a1a1a; margin-bottom: 8px; }}
         .hero .subtitle {{ color: #8c8c8c; font-size: 13px; }}
         .list {{ display: flex; flex-direction: column; gap: 12px; }}
@@ -122,7 +121,7 @@ def update_root_index():
 <body>
     <div class="container">
         <div class="hero">
-            <h1>🏘️ 贝尔格莱德房源</h1>
+            <h1>🌇Belgrade房源看板</h1>
             <p class="subtitle">刷新时间 {now_str} </p>
         </div>
         <div class="list">
@@ -190,6 +189,9 @@ def render():
         price = item.get('price') or "面议"
         publisher = item.get('publisher') or "中介"
         parking = item.get('parking')
+        
+        # 🎯 核心修改：动态获取数据源名称作为链接文字（如 HaloOglasi, 4zida.rs 等）
+        source_name = item.get('source') or '查看详情'
 
         parking_badge = '<span style="background:#ebf8ff;color:#3182ce;padding:2px 6px;border-radius:4px;font-size:11px;">🅿️ 带车位</span>' if parking else ''
         is_street_level = item.get('is_street_level')
@@ -203,16 +205,16 @@ def render():
         cards_html += f"""
         <div style="border: 1px solid rgba(255,255,255,0.6); border-radius: 12px; padding: 14px; margin-bottom: 14px; background: rgba(255,255,255,0.85); backdrop-filter: blur(10px); box-shadow: 0 4px 16px rgba(100,150,220,0.08);">
             <div style="display: flex; gap: 14px; align-items: flex-start;">
-                <!-- 左侧：图片 + 下方固定中文“点击查看详情”链接 -->
+                <!-- 左侧：图片 + 下方原网站名字链接 -->
                 <div style="flex-shrink: 0; width: 160px;">
                     <a href="{url}" target="_blank" style="text-decoration: none; display: block; width: 160px; height: 120px;">
                         {img_tag}
                     </a>
                     <div style="margin-top: 6px; font-size: 13px; font-weight: 600; line-height: 1.3; text-align: center;">
-                        <a href="{url}" target="_blank" style="color: #3182ce; text-decoration: none;">点击查看详情</a>
+                        <a href="{url}" target="_blank" style="color: #3182ce; text-decoration: none;">{source_name}</a>
                     </div>
                 </div>
-                <!-- 右侧：行政区保持在右侧，以及面积、价格、标签等 -->
+                <!-- 右侧：行政区、面积、价格、标签等 -->
                 <div style="flex: 1; min-width: 0;">
                     <p style="margin: 0 0 7px 0; color: #4a5568; font-size: 15px;">
                         📍 : {area} <br> 
@@ -238,7 +240,6 @@ def render():
     else:
         type_name = "商铺"
 
-    # 🎯 各业态详情页：保持清爽高档的浅蓝色渐变背景
     html_content = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -276,7 +277,7 @@ def render():
     out_file = OUTPUT_DIR / 'index.html'
     out_file.write_text(html_content, encoding='utf-8')
     update_root_index()
-    print(f"✨ 成功生成 card_render_v2.py 并渲染！总索引页已恢复经典深紫渐变，业态页保持浅蓝渐变。输出至: {out_file}")
+    print(f"✨ 成功更新 card_render.py 并渲染！输出至: {out_file}")
 
 if __name__ == '__main__':
     render()

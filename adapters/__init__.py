@@ -1,0 +1,1 @@
+# BelgradeEstate Scrapling adapters

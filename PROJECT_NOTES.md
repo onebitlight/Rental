@@ -28,7 +28,7 @@
   - `scraper_stan.py` → `ENABLE_STAN_SCRAPER`
   - `scraper_kuca.py` → `ENABLE_KUCA_SCRAPER`
   - 未来写字楼 → `ENABLE_OFFICE_SCRAPER`、商铺 → `ENABLE_SHOP_SCRAPER`（类型命名保持一致）。
-- **入口 `if __name__ == "__main__":` 必须判断开关**；开关为 `False` 时应置空该业态数据文件（`new_items.json` / `push_pending.json`）并直接退出，不抓取、不渲染、不推送。
+- **入口 `if __name__ == "__main__":` 必须判断开关**；开关为 `False` 时应置空该业态数据文件（`stan_temp.json` / `kuca_temp.json`）并直接退出，不抓取、不渲染、不推送。
 - **当前 `ENABLE_STAN_SCRAPER = True`（公寓启用中，2026-09-29 用户明确指示长期开启）**；如要暂停公寓抓取，仅在用户本人明确指示后才能关闭。
 - `ENABLE_KUCA_SCRAPER = True`（独栋启用中）。
 - `run_all.sh` 无参模式读取这些开关决定是否执行对应抓取；`stan`/`kuca` 传参强制单跑对应类型（绕过开关）。
@@ -38,8 +38,8 @@
 | 文件 | 作用 |
 |---|---|
 | `run_all.sh` | **统一入口**（2026-09-27 起取代 scraper.py）：依次跑 `scraper_stan.py`→`card_render.py stan`；`scraper_kuca.py`→`card_render.py kuca` |
-| `scraper_stan.py` | **公寓(Stan)抓取（唯一规范命名）**：CityExpert / HaloOglasi 等源 + 过滤 + 去重（写 `data/history_stan.json`）+ 写 `data/new_items.json` |
-| `scraper_kuca.py` | 独栋(Kuca)抓取 + 过滤 + 去重（写 `data/history_kuca.json`）+ 写 `data/push_pending.json` |
+| `scraper_stan.py` | **公寓(Stan)抓取（唯一规范命名）**：CityExpert / HaloOglasi 等源 + 过滤 + 去重（写 `data/history_stan.json`）+ 写 `data/stan_temp.json` |
+| `scraper_kuca.py` | 独栋(Kuca)抓取 + 过滤 + 去重（写 `data/history_kuca.json`）+ 写 `data/kuca_temp.json` |
 | `card_render.py` | 看板卡片渲染（`<stan|kuca>_<日期>/index_<日期>.html`）；微信图文卡（`data/card.html`/`card.png`/`card_text.md`） |
 | `send_wechat.py` | **微信推送唯一标准实现**：`push_daily_summary()` 统一汇总入口（公寓+独栋单条推送），含价格区间自动计算、预设回退、CLI argparse 兼容层 |
 | `card_render.py` | 微信图文卡片生成器（`data/card.html` / `card.png` / `card_text.md`） |
@@ -81,7 +81,7 @@ bash ~/Projects/BelgradeEstate/run_all.sh kuca
 - 每日 01:00 定时抓取，任务 id `2cfb0f31-b11d-4802-838c-e4f925d41f8a`（Belgrade Estate Daily Scrape，cron `0 1 * * *` tz=Europe/Belgrade，agentTurn 执行 `bash ~/Projects/BelgradeEstate/run_all.sh`），指令统一为 `bash ~/Projects/BelgradeEstate/run_all.sh`。
 - ⚠️ 旧任务 id `e89c7fb9-...` 已在 2026-10-02 迁移后丢失（网关 automations 中不存在），已重建。
 - 生成看板：`/Volumes/Data2TB/ai_output/BelgradeEstate/stan_<日期>/index_<日期>.html`、`/Volumes/Data2TB/ai_output/BelgradeEstate/kuca_<日期>/index_<日期>.html`。
-- 新增判定信号读 `data/push_pending.json`（kuca）；公寓数据在 `data/new_items.json`。
+- 新增判定信号读 `data/kuca_temp.json`（kuca）；公寓数据在 `data/stan_temp.json`。
 
 ## 5. 三源解析要点（已修复的坑，勿回退）
 
@@ -147,7 +147,7 @@ bash ~/Projects/BelgradeEstate/run_all.sh kuca
 
 ### 推送入口与调用链
 - **唯一主入口**：`push_daily_summary(date_str, stan_items, kuca_items, stan_count, stan_min, stan_max, kuca_count, kuca_min, kuca_max)`
-- **调用方**：`run_all.sh` 第3阶段读取 `data/new_items.json` + `data/push_pending.json` → 调用 `push_daily_summary(stan_items=..., kuca_items=...)`
+- **调用方**：`run_all.sh` 第3阶段读取 `data/stan_temp.json` + `data/kuca_temp.json` → 调用 `push_daily_summary(stan_items=..., kuca_items=...)`
 - **兼容旧接口**：`push_all()` 内部转调 `push_daily_summary()`；CLI 入口 `send()` 支持 argparse 传参
 
 ### 价格区间逻辑

@@ -70,9 +70,9 @@ echo ""
 # --- 4. 统一汇总推送 (单条消息包含公寓+独栋+商铺) ---
 echo "📨 [4/4] 检查推送状态..."
 
-KUCA_PENDING="$DIR/data/push_pending.json"
-STAN_PENDING="$DIR/data/new_items.json"
-LOKAL_PENDING="$DIR/data/lokal_items.json"
+KUCA_PENDING="$DIR/data/kuca_temp.json"
+STAN_PENDING="$DIR/data/stan_temp.json"
+LOKAL_PENDING="$DIR/data/lokal_temp.json"
 
 python3 -c "
 import json, pathlib
